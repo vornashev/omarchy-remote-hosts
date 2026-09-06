@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import stat
 import subprocess
@@ -161,7 +162,7 @@ class PersistenceTests(Isolated):
         with patch.object(h, "MAX_BYTES", len(original)), self.assertRaises(h.Error):
             self.store.save(oversized)
         self.assertEqual(self.store.path.read_bytes(), original)
-        self.assertFalse(list(self.store.root.glob(".remote-devices-*")))
+        self.assertFalse(list(self.store.root.glob(".remote-hosts-*")))
 
     def test_permissions_private_atomic_and_no_secret_fields(self):
         self.assertEqual(stat.S_IMODE(self.store.root.stat().st_mode), 0o700)
@@ -170,14 +171,14 @@ class PersistenceTests(Isolated):
         self.call(op="saveDevice", device=profile(name="renamed"))
         self.assertNotEqual(inode, self.store.path.stat().st_ino)
         self.assertEqual(self.store.load()["devices"][0]["name"], "renamed")
-        self.assertFalse(list(self.store.root.glob(".remote-devices-*")))
+        self.assertFalse(list(self.store.root.glob(".remote-hosts-*")))
 
     def test_atomic_failure_preserves_original_and_cleans_temp(self):
         original = self.store.path.read_bytes()
         with patch.object(h.os, "replace", side_effect=OSError("disk full")), self.assertRaises(OSError):
             self.call(op="saveDevice", device=profile(name="new"))
         self.assertEqual(original, self.store.path.read_bytes())
-        self.assertFalse(list(self.store.root.glob(".remote-devices-*")))
+        self.assertFalse(list(self.store.root.glob(".remote-hosts-*")))
 
     def test_public_permissions_and_symlink_fail_closed(self):
         self.store.path.chmod(0o644)
@@ -198,6 +199,32 @@ class PersistenceTests(Isolated):
         self.store.root.chmod(0o755)
         with self.assertRaises(h.Error), self.store.locked():
             pass
+
+    def test_default_store_atomically_migrates_legacy_namespace(self):
+        legacy = self.root / h.LEGACY_APP
+        old = h.Store(legacy)
+        with old.locked():
+            old.save(self.data)
+            h.atomic_write(old.settings_path, {"version": 1, "defaultTerminal": "kitty"})
+        with patch.dict(os.environ, {"XDG_DATA_HOME": str(self.root)}):
+            migrated = h.Store()
+            with migrated.locked():
+                self.assertEqual(migrated.load(), self.data)
+                self.assertEqual(migrated.load_settings(),
+                                 {"version": 1, "defaultTerminal": "kitty", "language": "en"})
+        self.assertEqual(migrated.root, self.root / h.APP)
+        self.assertFalse(legacy.exists())
+        self.assertEqual(stat.S_IMODE(migrated.root.stat().st_mode), 0o700)
+
+    def test_unsafe_legacy_namespace_is_not_migrated(self):
+        legacy = self.root / h.LEGACY_APP
+        legacy.mkdir(mode=0o755)
+        with patch.dict(os.environ, {"XDG_DATA_HOME": str(self.root)}):
+            target = h.Store()
+            with self.assertRaises(h.Error), target.locked():
+                pass
+        self.assertTrue(legacy.is_dir())
+        self.assertFalse((self.root / h.APP).exists())
 
     def test_group_crud_collapse_constraints(self):
         result = self.call(op="saveGroup", name="Работа")["data"]
@@ -323,7 +350,7 @@ class SecretTests(Isolated):
         self.assertNotIn(sentinel, repr(args))
         self.assertNotIn(sentinel, repr({k: v for k, v in kwargs.items() if k != "input"}))
         self.assertEqual(kwargs["input"], sentinel)
-        self.assertEqual(args[0][:3], ["secret-tool", "store", "--label=Omarchy remote device"])
+        self.assertEqual(args[0][:3], ["secret-tool", "store", "--label=Omarchy remote host"])
         self.assertNotIn("shell", kwargs)
 
     def test_secret_missing_failure_timeout_redacted(self):
@@ -336,6 +363,24 @@ class SecretTests(Isolated):
                 with patch.object(h.subprocess, "run", **target), self.assertRaises(h.Error) as raised:
                     h.secret("store", profile(), sentinel)
                 self.assertNotIn(sentinel, str(raised.exception))
+
+    def test_legacy_secret_is_migrated_on_first_lookup(self):
+        old_password = "legacy-secret"
+        responses = [
+            Mock(returncode=1, stdout="", stderr=""),
+            Mock(returncode=0, stdout=old_password + "\n", stderr=""),
+            Mock(returncode=0, stdout="", stderr=""),
+            Mock(returncode=0, stdout="", stderr=""),
+        ]
+        with patch.object(h.shutil, "which", return_value="secret-tool"), \
+             patch.object(h.subprocess, "run", side_effect=responses) as run:
+            self.assertEqual(h.secret("lookup", profile()), old_password)
+        calls = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(calls[0], ["secret-tool", "lookup", *h.secret_args(profile())])
+        self.assertEqual(calls[1], ["secret-tool", "lookup", *h.secret_args(profile(), h.LEGACY_APP)])
+        self.assertEqual(calls[2][:3], ["secret-tool", "store", "--label=Omarchy remote host"])
+        self.assertEqual(calls[3], ["secret-tool", "clear", *h.secret_args(profile(), h.LEGACY_APP)])
+        self.assertEqual(run.call_args_list[2].kwargs["input"], old_password)
 
     def test_password_never_persisted_returned_and_failure_no_profile(self):
         original = self.store.path.read_bytes()
@@ -389,7 +434,7 @@ class SecretTests(Isolated):
         self.data["devices"] = [profile(auth="password")]
         with self.store.locked():
             self.store.save(self.data)
-        env = {"REMOTE_DEVICES_PROFILE": ID, "REMOTE_DEVICES_ENDPOINT": h.revision(list(h.endpoint(profile())))}
+        env = {"REMOTE_HOSTS_PROFILE": ID, "REMOTE_HOSTS_ENDPOINT": h.revision(list(h.endpoint(profile())))}
         expected = "tema@example.test's password: "
         with patch.object(h, "secret", return_value="secret") as secret:
             self.assertEqual(h.askpass(expected, env, self.store), "secret")
@@ -398,7 +443,7 @@ class SecretTests(Isolated):
             with self.subTest(prompt=prompt), patch.object(h, "secret") as secret, self.assertRaises(h.Error):
                 h.askpass(prompt, env, self.store)
             secret.assert_not_called()
-        for addition in [{"SSH_ASKPASS_PROMPT": "confirm"}, {"SSH_ASKPASS_PROMPT": "none"}, {"SSH_ASKPASS_PROMPT": "unexpected"}, {"REMOTE_DEVICES_ENDPOINT": "wrong"}]:
+        for addition in [{"SSH_ASKPASS_PROMPT": "confirm"}, {"SSH_ASKPASS_PROMPT": "none"}, {"SSH_ASKPASS_PROMPT": "unexpected"}, {"REMOTE_HOSTS_ENDPOINT": "wrong"}]:
             with patch.object(h, "secret") as secret, self.assertRaises(h.Error):
                 h.askpass(expected, {**env, **addition}, self.store)
             secret.assert_not_called()
@@ -414,14 +459,57 @@ class SecretTests(Isolated):
 
 
 class SettingsTests(Isolated):
+    def test_main_defaults_to_english_and_supports_russian_responses(self):
+        def invoke(payload, effect):
+            inp = Mock(buffer=io.BytesIO((json.dumps(payload) + "\n").encode()))
+            out = io.StringIO()
+            with patch.object(sys, "argv", ["helper.py"]), patch.object(sys, "stdin", inp), \
+                 contextlib.redirect_stdout(out), patch.object(h, "dispatch", side_effect=effect) as dispatch:
+                h.main()
+            return json.loads(out.getvalue()), dispatch
+
+        english, dispatched = invoke({"op": "list"}, h.Error("Неизвестный клиент"))
+        self.assertEqual(english, {"ok": False, "error": "Unknown client"})
+        dispatched.assert_called_once_with({"op": "list"})
+        russian, dispatched = invoke({"op": "list", "language": "ru"}, h.Error("Неизвестный клиент"))
+        self.assertEqual(russian, {"ok": False, "error": "Неизвестный клиент"})
+        dispatched.assert_called_once_with({"op": "list"})
+        host_key, _ = invoke({"op": "list"}, lambda _: {
+            "message": "Настройки сохранены",
+            "hostKeys": {"message": "Ключи ещё не записаны. Сверьте каждый fingerprint по доверенному каналу."},
+        })
+        self.assertEqual(host_key["message"], "Settings saved")
+        self.assertEqual(host_key["hostKeys"]["message"],
+                         "Keys are not recorded yet. Verify every fingerprint over a trusted channel.")
+
+    def test_english_localization_never_leaks_unmapped_cyrillic_errors(self):
+        inp = Mock(buffer=io.BytesIO(b'{"op":"list"}\n'))
+        out = io.StringIO()
+        with patch.object(sys, "argv", ["helper.py"]), patch.object(sys, "stdin", inp), \
+             contextlib.redirect_stdout(out), patch.object(h, "dispatch", side_effect=h.Error("Новая ошибка")):
+            h.main()
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["error"], "Operation failed; check the input, permissions, and dependencies")
+        self.assertIsNone(re.search("[А-Яа-яЁё]", out.getvalue()))
+
     def test_export_cannot_create_settings_file(self):
         with self.assertRaises(h.Error):
             self.call(op="export", path=str(self.store.settings_path))
         self.assertFalse(self.store.settings_path.exists())
 
-    def save_terminal(self, terminal):
+    def save_terminal(self, terminal, language="en"):
         with patch.object(h.shutil, "which", return_value="/synthetic/terminal"):
-            return self.call(op="saveSettings", settings={"version": 1, "defaultTerminal": terminal})
+            return self.call(op="saveSettings", settings={"version": 1, "defaultTerminal": terminal, "language": language})
+
+    def test_language_defaults_to_english_and_selects_new_group_locale(self):
+        english = h.Store(self.root / "english")
+        with english.locked():
+            self.assertEqual(english.load_settings()["language"], "en")
+            self.assertEqual(english.load()["groups"][0]["name"], "Hosts")
+        russian = h.Store(self.root / "russian")
+        with russian.locked(), patch.object(h.shutil, "which", return_value="/synthetic/ghostty"):
+            russian.save_settings({"version": 1, "defaultTerminal": "ghostty", "language": "ru"})
+            self.assertEqual(russian.load()["groups"][0]["name"], "Устройства")
 
     def test_settings_survive_new_store_without_changing_profiles_or_export(self):
         before = self.store.path.read_bytes()
@@ -429,7 +517,7 @@ class SettingsTests(Isolated):
         other = h.Store(self.store.root)
         with patch.object(h.shutil, "which", side_effect=lambda name: "/synthetic/kitty" if name == "kitty" else None):
             result = h.dispatch({"op": "getSettings"}, other)
-        self.assertEqual(result["globalSettings"]["defaultTerminal"], "kitty")
+        self.assertEqual(result["globalSettings"], {"version": 1, "defaultTerminal": "kitty", "language": "en"})
         self.assertEqual([t["value"] for t in result["terminals"] if t["available"]], ["kitty"])
         self.assertEqual(self.store.path.read_bytes(), before)
         self.assertEqual(stat.S_IMODE(self.store.settings_path.stat().st_mode), 0o600)
@@ -440,16 +528,17 @@ class SettingsTests(Isolated):
         self.save_terminal("kitty")
         before = self.store.settings_path.read_bytes()
         for settings in [
-            {"version": 1, "defaultTerminal": "/tmp/terminal"},
-            {"version": 1, "defaultTerminal": ["kitty"]},
-            {"version": True, "defaultTerminal": "kitty"},
-            {"version": 2, "defaultTerminal": "kitty"},
-            {"version": 1, "defaultTerminal": "kitty", "password": "synthetic"},
+            {"version": 1, "defaultTerminal": "/tmp/terminal", "language": "en"},
+            {"version": 1, "defaultTerminal": ["kitty"], "language": "en"},
+            {"version": True, "defaultTerminal": "kitty", "language": "en"},
+            {"version": 2, "defaultTerminal": "kitty", "language": "en"},
+            {"version": 1, "defaultTerminal": "kitty", "language": "de"},
+            {"version": 1, "defaultTerminal": "kitty", "language": "en", "password": "synthetic"},
         ]:
             with self.subTest(settings=settings), self.assertRaises(h.Error):
                 self.call(op="saveSettings", settings=settings)
         with self.assertRaises(h.Error):
-            self.call(op="saveSettings", settings={"version": 1, "defaultTerminal": "kitty"}, command="anything")
+            self.call(op="saveSettings", settings={"version": 1, "defaultTerminal": "kitty", "language": "en"}, command="anything")
         self.assertEqual(self.store.settings_path.read_bytes(), before)
 
     def test_unavailable_terminal_cannot_replace_settings_or_fall_back_on_launch(self):
@@ -457,7 +546,7 @@ class SettingsTests(Isolated):
         before = self.store.settings_path.read_bytes()
         with patch.object(h.shutil, "which", side_effect=lambda name: "/synthetic/ghostty" if name == "ghostty" else None):
             with self.assertRaises(h.Error):
-                self.call(op="saveSettings", settings={"version": 1, "defaultTerminal": "foot"})
+                self.call(op="saveSettings", settings={"version": 1, "defaultTerminal": "foot", "language": "en"})
             with patch.object(h, "has_known_host_entry", return_value=True), self.assertRaises(h.Error):
                 self.call(op="launch", id=ID)
         self.assertEqual(self.store.settings_path.read_bytes(), before)
@@ -469,7 +558,7 @@ class SettingsTests(Isolated):
         for op in ("getSettings", "saveSettings"):
             request = {"op": op}
             if op == "saveSettings":
-                request["settings"] = {"version": 1, "defaultTerminal": "foot"}
+                request["settings"] = {"version": 1, "defaultTerminal": "foot", "language": "en"}
             with patch.object(h.shutil, "which", return_value="/synthetic/foot"), self.assertRaises(h.Error):
                 self.call(**request)
         self.assertEqual(json.loads(outside.read_text())["defaultTerminal"], "kitty")
@@ -883,7 +972,7 @@ class HostKeyTests(Isolated):
         self.assertEqual(known.read_text(), f"[192.0.2.10]:2222 ssh-ed25519 {key}\n")
         self.assertEqual(stat.S_IMODE((home / ".ssh").stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(known.stat().st_mode), 0o600)
-        self.assertEqual(stat.S_IMODE((home / ".ssh/.tema.remote-devices-known-hosts.lock").stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE((home / ".ssh/.tema.remote-hosts-known-hosts.lock").stat().st_mode), 0o600)
         keyscan_run.assert_called_once()
 
     def test_existing_safe_permissions_are_preserved_not_chmodded(self):

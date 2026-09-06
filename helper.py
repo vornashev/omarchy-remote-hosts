@@ -26,7 +26,8 @@ import time
 import uuid
 from typing import Any
 
-APP = "tema.remote-devices"
+APP = "tema.remote-hosts"
+LEGACY_APP = "tema.remote-devices"
 HERE = Path(__file__).resolve().parent
 MAX_BYTES = 1024 * 1024
 MAX_DEVICES = 100
@@ -60,6 +61,191 @@ DEVICE_FIELDS = {"id", "name", "host", "port", "login", "group", "note", "auth",
 
 class Error(Exception):
     """Only these fixed, non-secret messages may cross the UI boundary."""
+
+ENGLISH_MESSAGES = {
+    "Некорректный идентификатор": "Invalid identifier",
+    "IPv6 zone ID не поддерживается": "IPv6 zone IDs are not supported",
+    "IPv6: используйте адрес без квадратных скобок": "IPv6: enter the address without brackets",
+    "Адрес: только IPv4, IPv6 или ASCII-домен (IDN: punycode)": "Address: use IPv4, IPv6, or an ASCII domain (punycode for IDN)",
+    "Некорректный IPv4": "Invalid IPv4 address",
+    "Исполняемый файл: только имя из PATH без пути и аргументов": "Executable: use a PATH name without a path or arguments",
+    "Неизвестные поля устройства (секреты запрещены)": "Unknown host fields (secret fields are forbidden)",
+    "SSH-порт: 1–65535": "SSH port must be from 1 to 65535",
+    "Логин: буквы ASCII, цифры, _, точка, дефис": "Login: ASCII letters, digits, underscore, dot, and hyphen only",
+    "Неизвестный способ входа": "Unknown authentication method",
+    "Неизвестный клиент": "Unknown client",
+    "Неизвестный устаревший режим запуска SSH": "Unknown legacy SSH launch mode",
+    "AI-агенты: выберите поддерживаемые CLI без повторов": "AI agents: select supported CLI tools without duplicates",
+    "Для пароля путь к ключу должен быть пустым": "A password profile cannot also specify a key path",
+    "Неподдерживаемый формат: требуется version 1, groups, devices": "Unsupported format: version 1, groups, and devices are required",
+    "Нужно от 1 до 50 групп": "One to 50 groups are required",
+    "Лимит: 100 устройств": "Limit: 100 hosts",
+    "Некорректные поля группы": "Invalid group fields",
+    "Некорректное состояние группы": "Invalid group state",
+    "Повтор группы": "Duplicate group",
+    "Группа устройства не найдена": "Host group not found",
+    "Повтор идентификатора устройства": "Duplicate host identifier",
+    "Повтор адреса/порта/логина": "Duplicate address, port, and login",
+    "JSON превышает 1 МиБ": "JSON exceeds 1 MiB",
+    "Повтор JSON-поля": "Duplicate JSON field",
+    "Некорректный JSON": "Invalid JSON",
+    "Каталог данных должен принадлежать вам и иметь права 0700 (не symlink)": "The data directory must be owned by you with mode 0700 (not a symlink)",
+    "Каталог старых данных должен принадлежать вам и иметь права 0700 (не symlink)": "The legacy data directory must be owned by you with mode 0700 (not a symlink)",
+    "Файл данных должен принадлежать вам и иметь права 0600 (не symlink)": "The data file must be owned by you with mode 0600 (not a symlink)",
+    "Файл превышает 1 МиБ": "File exceeds 1 MiB",
+    "Файл уже существует; выберите новое имя": "File already exists; choose a new name",
+    "Некорректный текстовый файл": "Invalid text file",
+    "Некорректные поля глобальных настроек": "Invalid global settings fields",
+    "Неизвестная версия настроек": "Unknown settings version",
+    "Неизвестный терминал": "Unknown terminal",
+    "Неизвестный язык": "Unknown language",
+    "XDG_DATA_HOME должен быть абсолютным": "XDG_DATA_HOME must be an absolute path",
+    "Выбранный терминал не установлен или отсутствует в PATH": "The selected terminal is not installed or is missing from PATH",
+    "Secret Service: secret-tool не найден; пароль не сохранён": "Secret Service: secret-tool was not found; password was not saved",
+    "Secret Service недоступен или не ответил; операция отменена": "Secret Service is unavailable or did not respond; operation cancelled",
+    "Secret Service: операция не выполнена; разблокируйте хранилище": "Secret Service operation failed; unlock the keyring",
+    "Secret Service: не удалось перенести сохранённый пароль": "Secret Service could not migrate the saved password",
+    "Secret Service: не удалось завершить перенос пароля": "Secret Service could not finish password migration",
+    "Устройство не найдено; обновите список": "Host not found; refresh the list",
+    "Некорректное устройство": "Invalid host",
+    "Введите пароль для нового адреса/логина/порта": "Enter the password for the new address, login, or port",
+    "Пароль допустим только при входе по паролю": "A password is only allowed for password authentication",
+    "Дубликаты: skip или replace": "Duplicates: choose skip or replace",
+    "Файл импорта не найден": "Import file not found",
+    "Некорректный ключ SSH": "Invalid SSH key",
+    "ssh-keyscan вернул незапрошенный алгоритм": "ssh-keyscan returned an unrequested algorithm",
+    "Тип ключа SSH не совпадает с его содержимым": "SSH key type does not match its contents",
+    "Ответ ssh-keyscan слишком велик": "ssh-keyscan response is too large",
+    "ssh-keyscan вернул ключ для другого адреса или некорректную строку": "ssh-keyscan returned a key for another address or an invalid line",
+    "SSH-сервер не вернул host key": "The SSH server did not return a host key",
+    "SSH-сервер вернул слишком много host key": "The SSH server returned too many host keys",
+    "Не удалось запустить ssh-keyscan": "Could not start ssh-keyscan",
+    "Не удалось прочитать ssh-keyscan": "Could not read ssh-keyscan output",
+    "Сканирование host key превысило 8 секунд": "Host key scan exceeded 8 seconds",
+    "ssh-keyscan не получил ключи; проверьте адрес и SSH-порт": "ssh-keyscan received no keys; check the address and SSH port",
+    "ssh-keyscan вернул некорректный текст": "ssh-keyscan returned invalid text",
+    "ssh-keyscan не найден": "ssh-keyscan was not found",
+    "Домашний каталог пользователя некорректен": "Invalid user home directory",
+    "~/.ssh должен быть вашим каталогом без групповой/общей записи (не symlink)": "~/.ssh must be owned by you without group/world write access (not a symlink)",
+    "known_hosts/lock должен быть вашим обычным файлом без небезопасных прав (не symlink)": "known_hosts/lock must be your regular file without unsafe permissions (not a symlink)",
+    "known_hosts/lock изменился во время операции; запись отменена": "known_hosts/lock changed during the operation; write cancelled",
+    "known_hosts содержит некорректную запись для этого адреса": "known_hosts contains an invalid entry for this address",
+    "ssh-keygen не найден": "ssh-keygen was not found",
+    "Не удалось безопасно проверить known_hosts через ssh-keygen": "Could not safely inspect known_hosts using ssh-keygen",
+    "ssh-keygen не смог прочитать known_hosts": "ssh-keygen could not read known_hosts",
+    "Слишком много записей known_hosts для этого адреса": "Too many known_hosts entries for this address",
+    "Ключи ещё не записаны. Сверьте каждый fingerprint по доверенному каналу.": "Keys are not recorded yet. Verify every fingerprint over a trusted channel.",
+    "Этот адрес уже имеет совпадающие ключи в known_hosts; добавление не требуется.": "This address already has matching keys in known_hosts; no addition is required.",
+    "В known_hosts есть другой ключ. Возможна атака или смена ключа; плагин ничего не заменит.": "known_hosts contains a different key. This may indicate an attack or key rotation; the plugin will not replace it.",
+    "Для адреса есть специальная запись @cert-authority/@revoked; плагин её не изменит.": "A special @cert-authority/@revoked entry exists for this address; the plugin will not change it.",
+    "Повторите сканирование host key": "Repeat the host key scan",
+    "Fingerprint изменён; повторите сканирование": "Fingerprint changed; repeat the scan",
+    "Повтор ключа; повторите сканирование": "Duplicate key; repeat the scan",
+    "Адрес или просмотренные ключи изменились; повторите сканирование": "The address or reviewed keys changed; repeat the scan",
+    "Host key изменился после просмотра; доверие не сохранено": "The host key changed after review; trust was not saved",
+    "Ключ уже известен; повторная запись не нужна": "The key is already known; no duplicate write is needed",
+    "Обнаружен другой известный ключ; существующие записи не изменены": "A different known key was found; existing entries were not changed",
+    "Специальная запись known_hosts не изменена": "The special known_hosts entry was not changed",
+    "known_hosts изменился; повторите проверку": "known_hosts changed; repeat verification",
+    "Слишком много данных host key": "Too much host key data",
+    "Не удалось полностью записать known_hosts": "Could not fully write known_hosts",
+    "Host key добавлен в ~/.ssh/known_hosts; строгий вход по паролю теперь разрешён": "Host key added to ~/.ssh/known_hosts; strict password authentication is now allowed",
+    "Этот AI-агент не включён для сервера": "This AI agent is not enabled for the host",
+    "SFTP: runtime-каталог недоступен": "SFTP: runtime directory is unavailable",
+    "SFTP: небезопасный runtime-каталог": "SFTP: unsafe runtime directory",
+    "SFTP: runtime-каталог плагина небезопасен": "SFTP: plugin runtime directory is unsafe",
+    "SFTP: состояние mount недоступно": "SFTP: mount state is unavailable",
+    "SFTP: список mount слишком велик": "SFTP: mount list is too large",
+    "SFTP: marker слишком велик": "SFTP: marker is too large",
+    "Сначала отключите SFTP этого устройства": "Disconnect SFTP for this host first",
+    "SFTP: точка занята посторонним mount; отключение запрещено": "SFTP: mount point is occupied by another mount; disconnect is forbidden",
+    "SFTP: устройство не подключено": "SFTP: host is not mounted",
+    "SFTP: fusermount3 не найден": "SFTP: fusermount3 was not found",
+    "SFTP: размонтирование не выполнено": "SFTP: unmount failed",
+    "SFTP: размонтирование не выполнено; закройте открытые файлы": "SFTP: unmount failed; close open files",
+    "SFTP отключён": "SFTP disconnected",
+    "SFTP: sshfs не установлен; выполните в терминале: omarchy pkg add sshfs": "SFTP: sshfs is not installed; run in a terminal: omarchy pkg add sshfs",
+    "SFTP: Nautilus не найден": "SFTP: Nautilus was not found",
+    "SFTP: точка занята посторонним mount": "SFTP: mount point is occupied by another mount",
+    "SFTP: подключение не выполнено или превысило время ожидания": "SFTP: connection failed or timed out",
+    "SFTP: SSHFS отклонил подключение; проверьте пароль, ключ и SFTP на сервере": "SFTP: SSHFS rejected the connection; check the password, key, and server SFTP support",
+    "SFTP: SSHFS завершился без точки монтирования": "SFTP: SSHFS exited without a mount point",
+    "SFTP подключён через SSHFS и открыт в Nautilus": "SFTP mounted using SSHFS and opened in Nautilus",
+    "VS Code не найден": "VS Code was not found",
+    "VS Code: не удалось проверить Remote-SSH": "VS Code: could not verify Remote-SSH",
+    "VS Code: установите официальное расширение Remote-SSH": "VS Code: install the official Remote-SSH extension",
+    "VS Code Remote-SSH пока поддерживает только ключ или SSH-agent; пароль профиля не передаётся": "VS Code Remote-SSH currently supports only a key or SSH agent; profile passwords are not forwarded",
+    "AI CLI запускается только в терминале": "AI CLI tools launch only in a terminal",
+    "Клиент не найден в PATH": "Client was not found in PATH",
+    "Клиент запущен (результат подключения смотрите в клиенте)": "Client launched; see the client for the connection result",
+    "Запрос подтверждения запрещён": "Confirmation prompts are forbidden",
+    "Профиль входа изменился": "Authentication profile changed",
+    "Неожиданный запрос пароля": "Unexpected password prompt",
+    "ssh не найден": "ssh was not found",
+    "Файл ключа не найден": "Key file not found",
+    "secret-tool не найден": "secret-tool was not found",
+    "Требуется JSON-объект": "A JSON object is required",
+    "Проверка принимает только адрес и SSH-порт": "The check accepts only address and SSH port",
+    "Настройки принимают только параметры терминала": "Settings accept only terminal and language parameters",
+    "Настройки сохранены": "Settings saved",
+    "Устройство сохранено": "Host saved",
+    "Устройство удалено": "Host deleted",
+    "Сначала перенесите/удалите устройства группы": "Move or delete the hosts in this group first",
+    "Группа не найдена": "Group not found",
+    "Некорректные параметры экспорта": "Invalid export parameters",
+    "Каталог экспорта не найден": "Export directory not found",
+    "Нельзя экспортировать поверх данных плагина": "Cannot export over plugin data",
+    "Экспорт записан без паролей; права 0600": "Export written without passwords; mode 0600",
+    "Файл или профили изменились; повторите просмотр импорта": "The file or profiles changed; preview the import again",
+    "Импорт завершён; новые устройства используют ключ/агент": "Import complete; new hosts use a key or SSH agent",
+    "Запуск AI принимает только id и выбранного агента": "AI launch accepts only the host ID and selected agent",
+    "wl-copy не найден": "wl-copy was not found",
+    "Буфер обмена недоступен": "Clipboard is unavailable",
+    "Адрес скопирован (не пароль)": "Address copied (not a password)",
+    "Проверка устройства принимает только его id": "Host check accepts only its ID",
+    "Неизвестная операция": "Unknown operation",
+    "Неизвестные аргументы терминала": "Unknown terminal arguments",
+    "Неизвестные аргументы": "Unknown arguments",
+    "Запрос превышает 1 МиБ": "Request exceeds 1 MiB",
+    "Операция не выполнена: проверьте данные, права и зависимости": "Operation failed; check the input, permissions, and dependencies",
+}
+
+LABELS_EN = {
+    "Адрес": "Address", "Исполняемый файл": "Executable", "Имя": "Name",
+    "Заметка": "Note", "Путь к ключу": "Key path", "Удалённая папка": "Remote folder",
+    "Рабочая папка AI": "AI working folder", "Группа": "Group", "Пароль": "Password",
+    "Сохранённый пароль": "Saved password", "Файл импорта": "Import file",
+}
+
+
+def translate_message(message, language):
+    if language == "ru":
+        return message
+    if message in ENGLISH_MESSAGES:
+        return ENGLISH_MESSAGES[message]
+    for russian, english in LABELS_EN.items():
+        if message.startswith(russian + ":"):
+            suffix = message[len(russian) + 1:]
+            endings = {
+                " требуется строка": " must be a string",
+                " пустое или слишком длинное значение": " is empty or too long",
+                " управляющие символы запрещены": " contains forbidden control characters",
+                " нужен абсолютный путь; спецсимволы и .. запрещены": " must be an absolute path without special characters or ..",
+            }
+            return english + endings.get(suffix, ":" + suffix)
+    if re.search(r"[А-Яа-яЁё]", message):
+        return "Operation failed; check the input, permissions, and dependencies"
+    return message
+
+
+def translate_result(result, language):
+    result = dict(result)
+    if isinstance(result.get("message"), str):
+        result["message"] = translate_message(result["message"], language)
+    host_keys = result.get("hostKeys")
+    if isinstance(host_keys, dict) and isinstance(host_keys.get("message"), str):
+        result["hostKeys"] = {**host_keys, "message": translate_message(host_keys["message"], language)}
+    return result
 
 
 def require(ok, message):
@@ -203,7 +389,7 @@ def atomic_private_bytes(path, raw, overwrite=True):
     if path.exists() or path.is_symlink():
         check_file(path)
         require(overwrite, "Файл уже существует; выберите новое имя")
-    fd, temp = tempfile.mkstemp(prefix=".remote-devices-", dir=path.parent)
+    fd, temp = tempfile.mkstemp(prefix=".remote-hosts-", dir=path.parent)
     try:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as out:
@@ -235,12 +421,15 @@ def atomic_text(path, value):
 
 
 def global_settings(value):
-    require(isinstance(value, dict) and set(value) == {"version", "defaultTerminal"},
+    require(isinstance(value, dict)
+            and set(value) in ({"version", "defaultTerminal"}, {"version", "defaultTerminal", "language"}),
             "Некорректные поля глобальных настроек")
     require(type(value["version"]) is int and value["version"] == 1, "Неизвестная версия настроек")
     require(isinstance(value["defaultTerminal"], str) and value["defaultTerminal"] in TERMINALS,
             "Неизвестный терминал")
-    return dict(value)
+    language = value.get("language", "en")
+    require(language in ("en", "ru"), "Неизвестный язык")
+    return {"version": 1, "defaultTerminal": value["defaultTerminal"], "language": language}
 
 
 def settings_response(value):
@@ -254,11 +443,28 @@ class Store:
         base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
         require(Path(base).is_absolute(), "XDG_DATA_HOME должен быть абсолютным")
         self.root = Path(root) if root is not None else Path(base) / APP
+        self.legacy_root = None if root is not None else Path(base) / LEGACY_APP
         self.path = self.root / "profiles.json"
         self.settings_path = self.root / "settings.json"
 
+    def migrate_legacy(self):
+        if self.legacy_root is None or self.root.exists() or self.root.is_symlink():
+            return
+        if not self.legacy_root.exists() and not self.legacy_root.is_symlink():
+            return
+        legacy = self.legacy_root.lstat()
+        require(stat.S_ISDIR(legacy.st_mode) and legacy.st_uid == os.getuid()
+                and not legacy.st_mode & 0o077,
+                "Каталог старых данных должен принадлежать вам и иметь права 0700 (не symlink)")
+        os.rename(self.legacy_root, self.root)
+        directory = os.open(self.root.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     @contextlib.contextmanager
     def locked(self):
+        self.migrate_legacy()
         private_dir(self.root)
         fd = os.open(self.root / ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
@@ -270,7 +476,9 @@ class Store:
 
     def load(self):
         if not self.path.exists() and not self.path.is_symlink():
-            return {"version": 1, "groups": [{"id": DEFAULT_GROUP, "name": "Устройства", "collapsed": False}], "devices": []}
+            language = self.load_settings()["language"]
+            group_name = "Устройства" if language == "ru" else "Hosts"
+            return {"version": 1, "groups": [{"id": DEFAULT_GROUP, "name": group_name, "collapsed": False}], "devices": []}
         check_file(self.path)
         with self.path.open(encoding="utf-8") as src:
             return document(decode(src.read(MAX_BYTES + 1)))
@@ -280,7 +488,7 @@ class Store:
 
     def load_settings(self):
         if not self.settings_path.exists() and not self.settings_path.is_symlink():
-            return {"version": 1, "defaultTerminal": "ghostty"}
+            return {"version": 1, "defaultTerminal": "ghostty", "language": "en"}
         check_file(self.settings_path)
         with self.settings_path.open(encoding="utf-8") as src:
             return global_settings(decode(src.read(MAX_BYTES + 1)))
@@ -293,29 +501,52 @@ class Store:
         return value
 
 
-def secret_args(d):
+def secret_args(d, app=APP):
     digest = hashlib.sha256(json.dumps(endpoint(d)).encode()).hexdigest()
-    return ["application", APP, "profile", d["id"], "endpoint", digest]
+    return ["application", app, "profile", d["id"], "endpoint", digest]
+
+
+def secret_run(operation, d, password=None, app=APP):
+    argv = ["secret-tool", operation]
+    if operation == "store":
+        argv += ["--label=Omarchy remote host"]
+    argv += secret_args(d, app)
+    try:
+        return subprocess.run(argv, input=password if operation == "store" else None,
+                              capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        raise Error("Secret Service недоступен или не ответил; операция отменена") from None
 
 
 def secret(operation, d, password=None):
     require(shutil.which("secret-tool") is not None, "Secret Service: secret-tool не найден; пароль не сохранён")
-    argv = ["secret-tool", operation]
     if operation == "store":
         text(password, "Пароль", 4096)
-        argv += ["--label=Omarchy remote device"]
-    argv += secret_args(d)
-    try:
-        p = subprocess.run(argv, input=password if operation == "store" else None,
-                           capture_output=True, text=True, timeout=20)
-    except (OSError, subprocess.TimeoutExpired):
-        raise Error("Secret Service недоступен или не ответил; операция отменена") from None
-    require(p.returncode == 0, "Secret Service: операция не выполнена; разблокируйте хранилище")
-    if operation == "lookup":
-        result = p.stdout.removesuffix("\n")
-        text(result, "Сохранённый пароль", 4096)
-        return result
-    return None
+        result = secret_run("store", d, password)
+        require(result.returncode == 0, "Secret Service: операция не выполнена; разблокируйте хранилище")
+        return None
+    if operation == "clear":
+        current = secret_run("clear", d)
+        legacy = secret_run("clear", d, app=LEGACY_APP)
+        require(0 in (current.returncode, legacy.returncode),
+                "Secret Service: операция не выполнена; разблокируйте хранилище")
+        return None
+    result = secret_run("lookup", d)
+    if result.returncode == 1:
+        legacy = secret_run("lookup", d, app=LEGACY_APP)
+        if legacy.returncode == 0:
+            password = legacy.stdout.removesuffix("\n")
+            text(password, "Сохранённый пароль", 4096)
+            stored = secret_run("store", d, password)
+            require(stored.returncode == 0, "Secret Service: не удалось перенести сохранённый пароль")
+            cleared = secret_run("clear", d, app=LEGACY_APP)
+            require(cleared.returncode in (0, 1), "Secret Service: не удалось завершить перенос пароля")
+            return password
+        result = legacy
+    require(result.returncode == 0, "Secret Service: операция не выполнена; разблокируйте хранилище")
+    password = result.stdout.removesuffix("\n")
+    text(password, "Сохранённый пароль", 4096)
+    return password
 
 
 def find_device(data, id_):
@@ -704,7 +935,7 @@ def trust_host_keys(d, preview_keys, token, home=None):
 
     home = user_home() if home is None else Path(home)
     ssh_dir = ensure_ssh_directory(home)
-    lock_path = ssh_dir / ".tema.remote-devices-known-hosts.lock"
+    lock_path = ssh_dir / ".tema.remote-hosts-known-hosts.lock"
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         check_open_file(lock_fd, lock_path, private=True)
@@ -1072,8 +1303,8 @@ def askpass(prompt, env=None, store=None):
     require(env.get("SSH_ASKPASS_PROMPT", "") == "", "Запрос подтверждения запрещён")
     store = store or Store()
     with store.locked():
-        d = find_device(store.load(), env.get("REMOTE_DEVICES_PROFILE"))
-    require(d["auth"] == "password" and env.get("REMOTE_DEVICES_ENDPOINT") == revision(list(endpoint(d))),
+        d = find_device(store.load(), env.get("REMOTE_HOSTS_PROFILE"))
+    require(d["auth"] == "password" and env.get("REMOTE_HOSTS_ENDPOINT") == revision(list(endpoint(d))),
             "Профиль входа изменился")
     # OpenSSH password auth uses this literal prompt. No regex/fuzzy matching,
     # no keyboard-interactive challenges, no host-key/passphrase confirmations.
@@ -1095,12 +1326,12 @@ def terminal(id_, agent=None):
     # Remote hosts may lack the selected terminal's terminfo entry.
     # Advertise a broadly supported compatible terminal for remote TUIs.
     env["TERM"] = "xterm-256color"
-    for name in ("SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_ASKPASS_PROMPT", "REMOTE_DEVICES_PROFILE", "REMOTE_DEVICES_ENDPOINT"):
+    for name in ("SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_ASKPASS_PROMPT", "REMOTE_HOSTS_PROFILE", "REMOTE_HOSTS_ENDPOINT"):
         env.pop(name, None)
     if d["auth"] == "password":
         require(shutil.which("secret-tool") is not None, "secret-tool не найден")
         env.update(SSH_ASKPASS=str(HERE / "askpass.py"), SSH_ASKPASS_REQUIRE="force",
-                   REMOTE_DEVICES_PROFILE=d["id"], REMOTE_DEVICES_ENDPOINT=revision(list(endpoint(d))), LC_ALL="C")
+                   REMOTE_HOSTS_PROFILE=d["id"], REMOTE_HOSTS_ENDPOINT=revision(list(endpoint(d))), LC_ALL="C")
     os.execvpe("ssh", ssh_argv(d, agent), env)
 
 
@@ -1291,28 +1522,36 @@ def dispatch(req, store=None) -> dict[str, Any]:
 
 
 def main():
+    language = "en"
     try:
         if len(sys.argv) == 2 and sys.argv[1] == "--probe":
             print(json.dumps(probe(device(decode(sys.stdin.read(MAX_BYTES + 1))))))
             return
         if len(sys.argv) in (3, 5) and sys.argv[1] == "--terminal":
+            store = Store()
+            with store.locked():
+                language = store.load_settings()["language"]
             require(len(sys.argv) == 3 or sys.argv[3] == "--agent", "Неизвестные аргументы терминала")
             terminal(sys.argv[2], sys.argv[4] if len(sys.argv) == 5 else None)
             return
         require(len(sys.argv) == 1, "Неизвестные аргументы")
         raw = sys.stdin.buffer.readline(MAX_BYTES + 1)
         require(len(raw) <= MAX_BYTES, "Запрос превышает 1 МиБ")
-        result = dispatch(decode(raw.decode("utf-8")))
+        request = decode(raw.decode("utf-8"))
+        require(isinstance(request, dict), "Требуется JSON-объект")
+        language = request.pop("language", "en")
+        require(language in ("en", "ru"), "Неизвестный язык")
+        result = translate_result(dispatch(request), language)
         print(json.dumps({"ok": True, **result}, ensure_ascii=False))
     except Error as e:
+        message = translate_message(str(e), language)
         if "--terminal" in sys.argv:
-            print(str(e), file=sys.stderr)
+            print(message, file=sys.stderr)
             sys.exit(1)
-        else:
-            print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        print(json.dumps({"ok": False, "error": message}, ensure_ascii=False))
     except Exception:
         # Never serialize exception text or tracebacks: requests may contain passwords.
-        error = "Операция не выполнена: проверьте данные, права и зависимости"
+        error = translate_message("Операция не выполнена: проверьте данные, права и зависимости", language)
         print(json.dumps({"ok": False, "error": error}, ensure_ascii=False))
 
 

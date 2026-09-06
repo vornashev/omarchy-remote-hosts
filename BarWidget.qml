@@ -1,10 +1,9 @@
 import QtQuick
-import qs.Commons
 import qs.Ui
 
 BarWidget {
     id: root
-    moduleName: "tema.remote-devices"
+    moduleName: "tema.remote-hosts"
 
     readonly property var panelItem: panelLoader.item
     readonly property bool opened: panelItem ? panelItem.opened === true : false

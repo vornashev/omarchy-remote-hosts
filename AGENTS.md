@@ -1,6 +1,6 @@
 # Project instructions
 
-This repository is the source of truth for the `tema.remote-devices` Omarchy
+This repository is the source of truth for the `tema.remote-hosts` Omarchy
 plugin, published as `omarchy-remote-hosts`. Follow these instructions as
 repository constraints, then carry the user's requested work to completion.
 
@@ -36,13 +36,13 @@ repository constraints, then carry the user's requested work to completion.
 - `askpass.py` is a deliberately minimal OpenSSH password pipe. It must not
   print diagnostics, tracebacks, or secrets.
 - `tests/` uses temporary data and mocked external processes/network access.
-- User-facing text and documentation are in Russian.
+- User-facing text defaults to English; Russian is the supported alternate language.
 
 ## Security and side-effect boundaries
 
 - Never edit `/usr/share/omarchy/`.
 - The live installed copy is
-  `~/.config/omarchy/plugins/tema.remote-devices`. Develop and test in this
+  `~/.config/omarchy/plugins/tema.remote-hosts`. Develop and test in this
   repository first. Deploy only when explicitly requested, using
   `scripts/deploy-local`.
 - Never copy profiles, passwords, private keys, `known_hosts`, screenshots with

@@ -1,1 +1,2 @@
 singleton DraftState 1.0 DraftState.qml
+singleton I18n 1.0 I18n.qml

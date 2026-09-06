@@ -9,17 +9,19 @@ import "state" as State
 
 Ui.Panel {
     id: root
-    moduleName: "tema.remote-devices"
-    ipcTarget: "tema.remote-devices"
+    moduleName: "tema.remote-hosts"
+    ipcTarget: "tema.remote-hosts"
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
 
     property var profiles: ({version: 1, groups: [], devices: []})
     property var statuses: ({})
     property var sftpStates: ({})
-    property var globalConfig: ({version: 1, defaultTerminal: "ghostty"})
+    property var globalConfig: ({version: 1, defaultTerminal: "ghostty", language: "en"})
     property var terminals: []
     property bool settingsLoaded: false
+    readonly property string language: page === "settings" && settingsLoaded
+                                       ? languageChoice.value : (globalConfig.language || "en")
     readonly property bool terminalAvailable: terminals.some(function(t) { return t.value === terminalChoice.value && t.available })
     readonly property var agentLabels: ({
         pi: "Pi", codex: "Codex", claude: "Claude", opencode: "OpenCode",
@@ -56,6 +58,10 @@ Ui.Panel {
     readonly property color surfaceColor: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 1)
     readonly property color secondaryText: Qt.tint(surfaceColor, Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.72))
     property Item scrollFocusItem: null
+
+    function t(text) {
+        return State.I18n.t(language, text)
+    }
 
     onPageChanged: {
         message = ""
@@ -101,6 +107,7 @@ Ui.Panel {
         if (busy) return
         error = false
         message = ""
+        payload.language = language
         request.operation = payload.op
         request.payload = JSON.stringify(payload)
         request.running = true
@@ -109,16 +116,14 @@ Ui.Panel {
     function refresh() {
         if (!loaded || checker.running) return
         checker.operation = "all"
-        checker.deviceId = ""
-        checker.payload = JSON.stringify({op: "check"})
+        checker.payload = JSON.stringify({op: "check", language: language})
         checker.running = true
         checkGuard.restart()
     }
     function refreshDevice(d) {
         if (!loaded || checker.running || !d) return
         checker.operation = "device"
-        checker.deviceId = d.id
-        checker.payload = JSON.stringify({op: "checkDevice", id: d.id})
+        checker.payload = JSON.stringify({op: "checkDevice", id: d.id, language: language})
         checker.running = true
         checkGuard.restart()
     }
@@ -269,29 +274,29 @@ Ui.Panel {
     }
     function checkDraftEndpoint() {
         if (!/^[0-9]{1,5}$/.test(portField.text) || Number(portField.text) < 1 || Number(portField.text) > 65535) {
-            message = "SSH-порт: целое число 1–65535"; error = true; return
+            message = t("SSH port must be an integer from 1 to 65535"); error = true; return
         }
         draftStatus = null
         call({op: "checkEndpoint", host: hostField.text, port: Number(portField.text)})
     }
     function draftStatusInfo() {
         if (busy && request.operation === "checkEndpoint")
-            return {label: "Проверяем Ping и SSH-порт…", icon: "◌", color: Color.accent}
-        if (!draftStatus) return {label: "Проверка ещё не выполнялась", icon: "○", color: secondaryText}
-        if (draftStatus.ssh === "open") return {label: "Сервер доступен · SSH-порт открыт", icon: "●", color: Color.accent}
-        if (draftStatus.ping === "ok") return {label: "Ping есть · SSH-порт недоступен", icon: "▲", color: Color.urgent}
-        if (draftStatus.ssh === "dns-error") return {label: "Не удалось разрешить адрес", icon: "!", color: Color.urgent}
-        return {label: "Сервер или SSH-порт недоступен", icon: "●", color: Color.urgent}
+            return {label: t("Check ping and SSH port…"), icon: "◌", color: Color.accent}
+        if (!draftStatus) return {label: t("No check has run yet"), icon: "○", color: secondaryText}
+        if (draftStatus.ssh === "open") return {label: t("Server available · SSH port open"), icon: "●", color: Color.accent}
+        if (draftStatus.ping === "ok") return {label: t("Ping responds · SSH port unavailable"), icon: "▲", color: Color.urgent}
+        if (draftStatus.ssh === "dns-error") return {label: t("Could not resolve address"), icon: "!", color: Color.urgent}
+        return {label: t("Server or SSH port unavailable"), icon: "●", color: Color.urgent}
     }
     function draftStatusDetails() {
         if (!draftStatus) return ""
-        var ping = draftStatus.ms !== null ? draftStatus.ms + " мс" : "нет ответа"
-        var ssh = draftStatus.ssh === "open" ? "открыт" : draftStatus.ssh === "timeout" ? "тайм-аут" : "закрыт"
+        var ping = draftStatus.ms !== null ? draftStatus.ms + " ms" : t("no response")
+        var ssh = draftStatus.ssh === "open" ? t("open") : draftStatus.ssh === "timeout" ? t("timeout") : t("closed")
         return "Ping: " + ping + " · TCP SSH: " + ssh
     }
     function saveDevice() {
         if (!/^[0-9]{1,5}$/.test(portField.text)) {
-            message = "SSH-порт: целое число 1–65535"; error = true; return
+            message = t("SSH port must be an integer from 1 to 65535"); error = true; return
         }
         call({op: "saveDevice", device: {
             id: editId, name: nameField.text, host: hostField.text, port: Number(portField.text),
@@ -315,38 +320,41 @@ Ui.Panel {
     }
     function statusInfo(d) {
         if (checker.running && checker.deviceId === d.id)
-            return {kind: "pending", label: "Проверка…", icon: "◌", color: Color.accent}
+            return {kind: "pending", label: t("Checking…"), icon: "◌", color: Color.accent}
         var s = matchingStatus(d)
         if (!s) return checker.running
-            ? {kind: "pending", label: "Проверка…", icon: "◌", color: Color.accent}
-            : {kind: "unknown", label: "Не проверено", icon: "○", color: secondaryText}
+            ? {kind: "pending", label: t("Checking…"), icon: "◌", color: Color.accent}
+            : {kind: "unknown", label: t("Not checked"), icon: "○", color: secondaryText}
         if (s.ssh === "open")
-            return {kind: "online", label: "Доступен", icon: "●", color: Color.accent}
+            return {kind: "online", label: t("Available"), icon: "●", color: Color.accent}
         if (s.ping === "ok")
-            return {kind: "degraded", label: "SSH недоступен", icon: "▲", color: Color.urgent}
+            return {kind: "degraded", label: t("SSH unavailable"), icon: "▲", color: Color.urgent}
         if (s.ssh === "dns-error" || s.ssh === "error" || s.ping === "error")
-            return {kind: "error", label: "Ошибка проверки", icon: "!", color: Color.urgent}
-        return {kind: "offline", label: "Недоступен", icon: "●", color: Color.urgent}
+            return {kind: "error", label: t("Check failed"), icon: "!", color: Color.urgent}
+        return {kind: "offline", label: t("Unavailable"), icon: "●", color: Color.urgent}
     }
     function statusPing(d) {
         var s = matchingStatus(d)
-        return s && s.ms !== null && s.ms !== undefined ? s.ms + " мс" : ""
+        return s && s.ms !== null && s.ms !== undefined ? s.ms + " ms" : ""
     }
     function relativeCheckAge(checkedAt) {
         var checked = Date.parse(checkedAt)
-        if (!isFinite(checked)) return "время проверки неизвестно"
+        if (!isFinite(checked)) return t("check time unknown")
         var seconds = Math.max(0, Math.floor((clockMs - checked) / 1000))
-        if (seconds < 45) return "проверено только что"
-        if (seconds < 3600) return "проверено " + Math.floor(seconds / 60) + " мин назад"
-        if (seconds < 86400) return "проверено " + Math.floor(seconds / 3600) + " ч назад"
-        return "проверено " + Math.floor(seconds / 86400) + " дн назад"
+        if (seconds < 45) return t("checked just now")
+        if (seconds < 3600) return language === "ru" ? "проверено " + Math.floor(seconds / 60) + " мин назад"
+                                                    : "checked " + Math.floor(seconds / 60) + " min ago"
+        if (seconds < 86400) return language === "ru" ? "проверено " + Math.floor(seconds / 3600) + " ч назад"
+                                                     : "checked " + Math.floor(seconds / 3600) + " h ago"
+        return language === "ru" ? "проверено " + Math.floor(seconds / 86400) + " дн назад"
+                                 : "checked " + Math.floor(seconds / 86400) + " d ago"
     }
     function statusDetails(d) {
         var s = matchingStatus(d)
-        if (!s) return checker.running ? "Идёт проверка Ping и SSH-порта" : "Проверка ещё не выполнялась"
-        var labels = {ok: "ответ", unreachable: "нет ответа", error: "ошибка", unavailable: "недоступен",
-            timeout: "тайм-аут", open: "открыт", closed: "закрыт", "dns-error": "ошибка DNS"}
-        var ping = s.ms !== null ? s.ms + " мс" : (labels[s.ping] || s.ping)
+        if (!s) return checker.running ? t("Checking ping and SSH port") : t("No check has run yet")
+        var labels = {ok: t("response"), unreachable: t("no response"), error: t("error"), unavailable: t("Unavailable").toLowerCase(),
+            timeout: t("timeout"), open: t("open"), closed: t("closed"), "dns-error": t("DNS error")}
+        var ping = s.ms !== null ? s.ms + " ms" : (labels[s.ping] || s.ping)
         return "Ping: " + ping + " · TCP SSH: " + (labels[s.ssh] || s.ssh) + " · " + relativeCheckAge(s.checkedAt)
     }
     function matchingSftpState(d) {
@@ -361,9 +369,11 @@ Ui.Panel {
         return count
     }
     function summaryText() {
-        if (!loaded) return "ЗАГРУЗКА…"
-        if (checker.running) return "ОБНОВЛЯЕМ СТАТУСЫ…"
-        return profiles.devices.length + " УСТРОЙСТВ · " + onlineCount() + " ДОСТУПНО"
+        if (!loaded) return t("LOADING…")
+        if (checker.running) return t("REFRESHING STATUSES…")
+        return language === "ru"
+            ? profiles.devices.length + " ХОСТОВ · " + onlineCount() + " ДОСТУПНО"
+            : profiles.devices.length + " HOSTS · " + onlineCount() + " AVAILABLE"
     }
     function actionDevice() {
         for (var i = 0; i < profiles.devices.length; i++)
@@ -409,12 +419,13 @@ Ui.Panel {
             try {
                 var result = JSON.parse(reply)
                 if (!result || typeof result !== "object" || typeof result.ok !== "boolean")
-                    throw new Error("Некорректный ответ помощника")
-                if (!result.ok) throw new Error(typeof result.error === "string" ? result.error : "Ошибка помощника")
+                    throw new Error(root.t("Invalid helper response"))
+                if (!result.ok) throw new Error(typeof result.error === "string" ? result.error : root.t("Helper error"))
                 if (result.data) { root.profiles = result.data; root.loaded = true }
                 if (result.globalSettings) {
-                    root.globalConfig = result.globalSettings
                     terminalChoice.value = result.globalSettings.defaultTerminal
+                    languageChoice.value = result.globalSettings.language || "en"
+                    root.globalConfig = result.globalSettings
                     root.settingsLoaded = true
                 }
                 if (result.terminals) root.terminals = result.terminals
@@ -430,8 +441,10 @@ Ui.Panel {
                 root.error = false
                 if (result.preview) {
                     root.importToken = result.token
-                    root.importSummary = "Добавить: " + result.preview.added + "; пропустить: " + result.preview.skipped + "; заменить: " + result.preview.replaced
-                    root.previewRows = result.previewDevices.map(function(d) { return d.name + " — " + d.login + "@" + d.host + ":" + d.port + " · SSH · " + d.auth + (d.agents && d.agents.length ? "\nAI: " + d.agents.map(root.agentLabel).join(", ") : "") + (d.agentFolder ? "\nПапка AI: " + d.agentFolder : "") + (d.keyPath ? "\nКлюч: " + d.keyPath : "") + (d.remoteFolder ? "\nПапка VS Code/SFTP: " + d.remoteFolder : "") + (d.note ? "\nЗаметка: " + d.note : "") }).join("\n\n")
+                    root.importSummary = root.language === "ru"
+                        ? "Добавить: " + result.preview.added + "; пропустить: " + result.preview.skipped + "; заменить: " + result.preview.replaced
+                        : "Add: " + result.preview.added + "; skip: " + result.preview.skipped + "; replace: " + result.preview.replaced
+                    root.previewRows = result.previewDevices.map(function(d) { return d.name + " — " + d.login + "@" + d.host + ":" + d.port + " · SSH · " + d.auth + (d.agents && d.agents.length ? "\nAI: " + d.agents.map(root.agentLabel).join(", ") : "") + (d.agentFolder ? "\n" + (root.language === "ru" ? "Папка AI: " : "AI folder: ") + d.agentFolder : "") + (d.keyPath ? "\n" + (root.language === "ru" ? "Ключ: " : "Key: ") + d.keyPath : "") + (d.remoteFolder ? "\n" + (root.language === "ru" ? "Папка VS Code/SFTP: " : "VS Code/SFTP folder: ") + d.remoteFolder : "") + (d.note ? "\n" + (root.language === "ru" ? "Заметка: " : "Note: ") + d.note : "") }).join("\n\n")
                 }
                 if (result.hostKeys) {
                     root.hostKeyDeviceId = result.hostKeys.deviceId
@@ -462,7 +475,7 @@ Ui.Panel {
                 else if (operation === "deleteDevice" || operation === "import") root.showList()
                 else if ((operation === "launch" || operation === "launchAgent") && !result.hostKeys) root.clearPendingLaunch()
                 root.message = (operation === "launch" || operation === "launchAgent") && !result.hostKeys
-                    ? "Клиент открыт. Результат входа — в его окне."
+                    ? root.t("Client opened. See its window for the connection result.")
                     : (result.message || "")
                 if (root.refreshAfterLoad) {
                     root.refreshAfterLoad = false
@@ -471,8 +484,8 @@ Ui.Panel {
                 root.restoreDraftFocus()
             } catch (e) {
                 root.error = true
-                root.message = reply === "" ? "Помощник не ответил; проверьте Python и права"
-                                             : (String(e.message).indexOf("JSON") >= 0 ? "Некорректный ответ помощника" : String(e.message))
+                root.message = reply === "" ? root.t("Helper did not respond; check Python and permissions")
+                                             : (String(e.message).indexOf("JSON") >= 0 ? root.t("Invalid helper response") : String(e.message))
                 if (operation === "launch" || operation === "launchAgent" || operation === "trustHostKey") root.clearPendingLaunch()
                 root.refreshAfterLoad = false
             }
@@ -484,7 +497,7 @@ Ui.Panel {
         onTriggered: {
             request.signal(9); request.payload = ""
             if (request.operation === "launch" || request.operation === "launchAgent" || request.operation === "trustHostKey") root.clearPendingLaunch()
-            root.error = true; root.message = "Операция превысила 65 секунд"
+            root.error = true; root.message = root.t("Operation exceeded 65 seconds")
         }
     }
     Process {
@@ -506,8 +519,8 @@ Ui.Panel {
             try {
                 var result = JSON.parse(reply)
                 if (!result || typeof result !== "object" || typeof result.ok !== "boolean")
-                    throw new Error("Некорректный ответ")
-                if (!result.ok) throw new Error(typeof result.error === "string" ? result.error : "Ошибка проверки")
+                    throw new Error(root.t("Invalid helper response"))
+                if (!result.ok) throw new Error(typeof result.error === "string" ? result.error : root.t("Check failed"))
                 if (checker.operation === "device") {
                     var merged = Object.assign({}, root.statuses)
                     for (var id in result.statuses) merged[id] = result.statuses[id]
@@ -516,9 +529,9 @@ Ui.Panel {
                     root.statuses = result.statuses
                 }
             } catch (e) {
-                var detail = reply === "" ? "помощник не ответил"
-                                           : (String(e.message).indexOf("JSON") >= 0 ? "некорректный ответ помощника" : String(e.message))
-                root.error = true; root.message = "Проверка не выполнена: " + detail
+                var detail = reply === "" ? root.t("helper did not respond")
+                                           : (String(e.message).indexOf("JSON") >= 0 ? root.t("invalid helper response") : String(e.message))
+                root.error = true; root.message = root.t("Check failed: ") + detail
             }
         }
     }
@@ -545,7 +558,7 @@ Ui.Panel {
         anchors.fill: parent
         bar: root.bar
         text: "󰒋"
-        tooltipText: "Удалённые хосты"
+        tooltipText: root.t("Remote Hosts")
         onPressed: function(b) { if (b === Qt.MiddleButton) root.refresh(); else root.toggle() }
     }
     Ui.KeyboardPanel {
@@ -595,19 +608,19 @@ Ui.Panel {
                             size: Style.space(34)
                             focusable: true
                             enabled: !root.busy
-                            tooltipText: root.page === "group" ? "К группам" : "К устройствам"
+                            tooltipText: root.page === "group" ? root.t("Back to groups") : root.t("Back to hosts")
                             onClicked: root.navigateBack()
                         }
                         Label {
                             font.bold: true
                             font.pixelSize: Style.font.heading
-                            text: root.page === "list" ? "Удалённые хосты"
-                                : root.page === "device" ? (root.editId ? "Изменить хост" : "Новый хост")
-                                : root.page === "groups" ? "Группы"
-                                : root.page === "group" ? (root.groupId ? "Изменить группу" : "Новая группа")
-                                : root.page === "transfer" ? "Импорт / экспорт"
-                                : root.page === "settings" ? "Настройки"
-                                : root.page === "hostkey" ? "Проверка ключа сервера" : "Инструменты устройства"
+                            text: root.page === "list" ? root.t("Remote Hosts")
+                                : root.page === "device" ? root.t(root.editId ? "Edit host" : "New host")
+                                : root.page === "groups" ? root.t("Groups")
+                                : root.page === "group" ? root.t(root.groupId ? "Edit group" : "New group")
+                                : root.page === "transfer" ? root.t("Import / export")
+                                : root.page === "settings" ? root.t("Settings")
+                                : root.page === "hostkey" ? root.t("Verify host key") : root.t("Host tools")
                         }
                         Ui.PanelActionButton {
                             visible: root.page === "list"
@@ -616,7 +629,7 @@ Ui.Panel {
                             size: Style.space(34)
                             focusable: true
                             enabled: !root.busy
-                            tooltipText: "Глобальные настройки"
+                            tooltipText: root.t("Global settings")
                             onClicked: root.openSettings()
                         }
                         Ui.PanelActionButton {
@@ -626,7 +639,7 @@ Ui.Panel {
                             size: Style.space(34)
                             focusable: true
                             enabled: root.loaded && !root.busy && !checker.running
-                            tooltipText: "Обновить Ping и SSH-порты"
+                            tooltipText: root.t("Refresh ping and SSH ports")
                             onClicked: root.refresh()
                         }
                     }
@@ -636,11 +649,11 @@ Ui.Panel {
                         Layout.fillWidth: true
                         spacing: Style.space(6)
                         enabled: !root.busy
-                        Action { text: "+ Устройство"; foreground: Color.accent; enabled: root.loaded; onClicked: root.editDevice(null) }
-                        Action { text: "Группы"; bordered: false; enabled: root.loaded; onClicked: root.page = "groups" }
-                        Action { text: "Импорт / экспорт"; bordered: false; enabled: root.loaded; onClicked: { root.page = "transfer"; root.importToken = "" } }
+                        Action { text: root.t("+ Host"); foreground: Color.accent; enabled: root.loaded; onClicked: root.editDevice(null) }
+                        Action { text: root.t("Groups"); bordered: false; enabled: root.loaded; onClicked: root.page = "groups" }
+                        Action { text: root.t("Import / export"); bordered: false; enabled: root.loaded; onClicked: { root.page = "transfer"; root.importToken = "" } }
                     }
-                    Action { visible: root.page === "groups"; text: "+ Группа"; foreground: Color.accent; enabled: !root.busy; onClicked: root.editGroup(null) }
+                    Action { visible: root.page === "groups"; text: root.t("+ Group"); foreground: Color.accent; enabled: !root.busy; onClicked: root.editGroup(null) }
                     Ui.PanelSeparator { Layout.fillWidth: true }
                 }
                 RowLayout {
@@ -651,7 +664,7 @@ Ui.Panel {
                         iconText: "󰅖"
                         size: Style.space(28)
                         focusable: true
-                        tooltipText: "Закрыть сообщение"
+                        tooltipText: root.t("Dismiss message")
                         onClicked: root.message = ""
                     }
                 }
@@ -677,7 +690,7 @@ Ui.Panel {
                             Layout.fillWidth: true
                             spacing: Style.space(12)
                             enabled: !root.busy
-                            Label { visible: root.loaded && root.profiles.devices.length === 0; text: "Пока нет устройств.\nДобавьте сервер, NAS или компьютер." }
+                            Label { visible: root.loaded && root.profiles.devices.length === 0; text: root.t("No hosts yet.\nAdd a server, NAS, or computer.") }
                             Repeater {
                                 model: root.profiles.groups
                                 ColumnLayout {
@@ -726,7 +739,7 @@ Ui.Panel {
                                                         fontSize: Style.font.caption
                                                         foreground: deviceCard.status.kind === "online" ? root.secondaryText : deviceCard.status.color
                                                         enabled: !checker.running
-                                                        tooltipText: root.statusDetails(deviceCard.modelData) + "\nПовторить проверку. Открытый порт не подтверждает вход по SSH."
+                                                        tooltipText: root.statusDetails(deviceCard.modelData) + "\n" + root.t("Retry check. An open port does not confirm SSH authentication.")
                                                         onClicked: root.refreshDevice(deviceCard.modelData)
                                                     }
                                                 }
@@ -738,13 +751,13 @@ Ui.Panel {
                                                         elide: Text.ElideMiddle
                                                         Layout.minimumWidth: 0
                                                     }
-                                                    Action { text: "SSH"; iconText: "󰆍"; foreground: Color.accent; tooltipText: "Подключиться в выбранном терминале"; onClicked: root.launchDevice(deviceCard.modelData.id) }
+                                                    Action { text: "SSH"; iconText: "󰆍"; foreground: Color.accent; tooltipText: root.t("Connect in the selected terminal"); onClicked: root.launchDevice(deviceCard.modelData.id) }
                                                     Ui.PanelActionButton {
                                                         iconText: deviceCard.expanded ? "󰅃" : "󰅀"
                                                         fontSize: Style.space(20)
                                                         size: Style.space(34)
                                                         focusable: true
-                                                        tooltipText: deviceCard.expanded ? "Скрыть действия" : "Показать действия"
+                                                        tooltipText: root.t(deviceCard.expanded ? "Hide actions" : "Show actions")
                                                         onClicked: root.actionId = deviceCard.expanded ? "" : deviceCard.modelData.id
                                                         onActiveFocusChanged: if (activeFocus) root.ensureVisible(this)
                                                     }
@@ -758,21 +771,21 @@ Ui.Panel {
                                                         Layout.fillWidth: true
                                                         spacing: Style.space(4)
                                                         Action {
-                                                            text: "Файлы"
+                                                            text: root.t("Files")
                                                             iconText: "󰉋"
                                                             bordered: false
                                                             enabled: deviceCard.mountState !== "foreign"
-                                                            tooltipText: deviceCard.mountState === "mounted" ? "Открыть подключённый SFTP" : "Подключить SFTP через SSHFS"
+                                                            tooltipText: root.t(deviceCard.mountState === "mounted" ? "Open mounted SFTP" : "Mount SFTP using SSHFS")
                                                             onClicked: root.launchDevice(deviceCard.modelData.id, "sftp")
                                                         }
                                                         Action { text: "VS Code"; iconText: "󰨞"; bordered: false; enabled: deviceCard.modelData.auth === "agent"; onClicked: root.launchDevice(deviceCard.modelData.id, "vscode") }
-                                                        Action { text: "Изменить"; iconText: "󰏫"; bordered: false; onClicked: root.editDevice(deviceCard.modelData) }
-                                                        Action { text: "Ещё"; bordered: false; onClicked: { root.actionId = deviceCard.modelData.id; root.page = "actions" } }
+                                                        Action { text: root.t("Edit"); iconText: "󰏫"; bordered: false; onClicked: root.editDevice(deviceCard.modelData) }
+                                                        Action { text: root.t("More"); bordered: false; onClicked: { root.actionId = deviceCard.modelData.id; root.page = "actions" } }
                                                     }
-                                                    Caption { visible: deviceCard.modelData.auth !== "agent"; text: "VS Code: нужен ключ или SSH-агент." }
+                                                    Caption { visible: deviceCard.modelData.auth !== "agent"; text: root.t("VS Code requires a key or SSH agent.") }
                                                     Caption {
                                                         visible: deviceCard.mountState !== "unmounted"
-                                                        text: deviceCard.mountState === "mounted" ? "SFTP подключён · отключение в «Ещё»" : "SFTP недоступен: точка подключения занята."
+                                                        text: root.t(deviceCard.mountState === "mounted" ? "SFTP mounted · disconnect under More" : "SFTP unavailable: mount point is occupied.")
                                                         color: deviceCard.mountState === "foreign" ? Color.urgent : root.secondaryText
                                                     }
                                                     Caption { visible: (deviceCard.modelData.agents || []).length > 0; text: "AI CLI" }
@@ -786,7 +799,7 @@ Ui.Panel {
                                                                 required property string modelData
                                                                 text: root.agentLabel(modelData)
                                                                 iconText: root.agentIcon(modelData)
-                                                                tooltipText: "Подключиться и запустить " + root.agentLabel(modelData)
+                                                                tooltipText: root.t("Connect and launch ") + root.agentLabel(modelData)
                                                                 onClicked: root.launchAgent(deviceCard.modelData.id, modelData)
                                                             }
                                                         }
@@ -808,18 +821,18 @@ Ui.Panel {
                             Label { text: toolsPage.device ? toolsPage.device.name : ""; font.bold: true }
                             Caption { text: toolsPage.device ? root.statusDetails(toolsPage.device) : "" }
                             Caption { visible: text !== ""; text: toolsPage.device ? toolsPage.device.note : "" }
-                            Action { Layout.fillWidth: true; leftAlign: true; iconText: "󰆏"; text: "Копировать адрес хоста"; onClicked: root.call({op: "copy", id: root.actionId}) }
-                            Action { Layout.fillWidth: true; leftAlign: true; iconText: "󰌆"; text: "Проверить ключ сервера"; onClicked: root.inspectHostKey(root.actionId) }
+                            Action { Layout.fillWidth: true; leftAlign: true; iconText: "󰆏"; text: root.t("Copy host address"); onClicked: root.call({op: "copy", id: root.actionId}) }
+                            Action { Layout.fillWidth: true; leftAlign: true; iconText: "󰌆"; text: root.t("Verify host key"); onClicked: root.inspectHostKey(root.actionId) }
                             Action {
                                 visible: toolsPage.device !== null && root.matchingSftpState(toolsPage.device) === "mounted"
                                 Layout.fillWidth: true
                                 leftAlign: true
                                 iconText: "󰅖"
-                                text: "Отключить SFTP"
+                                text: root.t("Disconnect SFTP")
                                 onClicked: root.call({op: "unmountSftp", id: root.actionId})
                             }
                             Ui.PanelSeparator { Layout.fillWidth: true }
-                            Action { iconText: "󰆴"; text: "Удалить устройство"; foreground: Color.urgent; onClicked: root.requestDelete("deleteDevice", root.actionId) }
+                            Action { iconText: "󰆴"; text: root.t("Delete host"); foreground: Color.urgent; onClicked: root.requestDelete("deleteDevice", root.actionId) }
                         }
                         ColumnLayout {
                             visible: root.page === "device"
@@ -829,16 +842,16 @@ Ui.Panel {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: Style.space(4)
-                                Caption { text: "Название" }
-                                Field { id: nameField; placeholderText: "Например, домашний сервер"; maximumLength: 100; onTextChanged: if (State.DraftState.active) State.DraftState.name = text; onActiveFocusChanged: root.rememberDraftFocus("name", nameField) }
+                                Caption { text: root.t("Name") }
+                                Field { id: nameField; placeholderText: root.t("For example, home server"); maximumLength: 100; onTextChanged: if (State.DraftState.active) State.DraftState.name = text; onActiveFocusChanged: root.rememberDraftFocus("name", nameField) }
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: Style.space(4)
-                                Caption { text: "Адрес сервера" }
+                                Caption { text: root.t("Server address") }
                                 Field {
                                     id: hostField
-                                    placeholderText: "IPv4, IPv6 без скобок или ASCII-домен"
+                                    placeholderText: root.t("IPv4, unbracketed IPv6, or ASCII domain")
                                     maximumLength: 253
                                     onTextChanged: {
                                         root.draftStatus = null
@@ -853,14 +866,14 @@ Ui.Panel {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: Style.space(4)
-                                    Caption { text: "Пользователь" }
-                                    Field { id: loginField; placeholderText: "SSH-логин"; maximumLength: 64; onTextChanged: if (State.DraftState.active) State.DraftState.login = text; onActiveFocusChanged: root.rememberDraftFocus("login", loginField) }
+                                    Caption { text: root.t("User") }
+                                    Field { id: loginField; placeholderText: root.t("SSH login"); maximumLength: 64; onTextChanged: if (State.DraftState.active) State.DraftState.login = text; onActiveFocusChanged: root.rememberDraftFocus("login", loginField) }
                                 }
                                 ColumnLayout {
                                     Layout.preferredWidth: Style.space(88)
                                     Layout.maximumWidth: Style.space(88)
                                     spacing: Style.space(4)
-                                    Caption { text: "Порт" }
+                                    Caption { text: root.t("Port") }
                                     Field {
                                         id: portField
                                         placeholderText: "22"
@@ -877,7 +890,7 @@ Ui.Panel {
                                 Layout.fillWidth: true
                                 spacing: Style.space(4)
                                 Action {
-                                    text: root.busy && request.operation === "checkEndpoint" ? "Проверяем…" : "Проверить доступность"
+                                    text: root.busy && request.operation === "checkEndpoint" ? root.t("Checking…") : root.t("Check availability")
                                     enabled: !root.busy && hostField.text.trim() !== "" && portField.text !== ""
                                     onClicked: root.checkDraftEndpoint()
                                 }
@@ -891,7 +904,7 @@ Ui.Panel {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: Style.space(4)
-                                Caption { text: "Группа" }
+                                Caption { text: root.t("Group") }
                                 Choice {
                                     id: groupChoice
                                     options: root.profiles.groups.map(function(g) { return {value: g.id, label: g.name} })
@@ -902,10 +915,10 @@ Ui.Panel {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: Style.space(4)
-                                Caption { text: "Аутентификация" }
+                                Caption { text: root.t("Authentication") }
                                 Choice {
                                     id: authChoice
-                                    options: [{value: "agent", label: "Ключ / SSH-агент"}, {value: "password", label: "Пароль"}]
+                                    options: [{value: "agent", label: root.t("Key / SSH agent")}, {value: "password", label: root.t("Password")}]
                                     onChanged: function(v) { value = v; passwordField.text = ""; if (State.DraftState.active) { State.DraftState.auth = v; State.DraftState.password = "" } }
                                 }
                             }
@@ -913,17 +926,17 @@ Ui.Panel {
                                 visible: authChoice.value === "agent"
                                 Layout.fillWidth: true
                                 spacing: Style.space(4)
-                                Caption { text: "Файл ключа · необязательно" }
+                                Caption { text: root.t("Key file · optional") }
                                 Field { id: keyField; placeholderText: "/home/…/.ssh/id_ed25519"; maximumLength: 1024; onTextChanged: if (State.DraftState.active) State.DraftState.keyPath = text; onActiveFocusChanged: root.rememberDraftFocus("key", keyField) }
-                                Caption { text: "Пусто — ключи по умолчанию или SSH-агент." }
+                                Caption { text: root.t("Empty uses default keys or SSH agent.") }
                             }
                             ColumnLayout {
                                 visible: authChoice.value === "password"
                                 Layout.fillWidth: true
                                 spacing: Style.space(4)
-                                Caption { text: root.editId ? "Новый пароль" : "Пароль" }
-                                Field { id: passwordField; password: true; placeholderText: root.editId ? "Пусто — оставить сохранённый" : "Пароль SSH"; maximumLength: 4096; onTextChanged: if (State.DraftState.active) State.DraftState.password = text; onActiveFocusChanged: root.rememberDraftFocus("password", passwordField) }
-                                Caption { text: "Хранится в Secret Service. При смене адреса, порта или логина введите пароль заново." }
+                                Caption { text: root.t(root.editId ? "New password" : "Password") }
+                                Field { id: passwordField; password: true; placeholderText: root.t(root.editId ? "Empty keeps the saved password" : "SSH password"); maximumLength: 4096; onTextChanged: if (State.DraftState.active) State.DraftState.password = text; onActiveFocusChanged: root.rememberDraftFocus("password", passwordField) }
+                                Caption { text: root.t("Stored in Secret Service. Enter it again after changing address, port, or login.") }
                             }
                             Ui.PanelSeparator { Layout.fillWidth: true }
                             Action {
@@ -931,7 +944,7 @@ Ui.Panel {
                                 leftAlign: true
                                 bordered: false
                                 iconText: State.DraftState.aiExpanded ? "󰅀" : "󰅂"
-                                text: "AI CLI" + (State.DraftState.agents.length ? " · выбрано: " + State.DraftState.agents.length : " · не выбраны")
+                                text: "AI CLI" + (State.DraftState.agents.length ? " · " + root.t("selected") + ": " + State.DraftState.agents.length : " · " + root.t("none selected"))
                                 tooltipText: State.DraftState.agents.map(root.agentLabel).join(", ")
                                 onClicked: State.DraftState.aiExpanded = !State.DraftState.aiExpanded
                             }
@@ -939,7 +952,7 @@ Ui.Panel {
                                 visible: State.DraftState.aiExpanded
                                 Layout.fillWidth: true
                                 spacing: Style.space(8)
-                                Caption { text: "Выберите CLI, уже установленные на сервере." }
+                                Caption { text: root.t("Select CLI tools already installed on the server.") }
                                 Flow {
                                     Layout.fillWidth: true
                                     spacing: Style.space(6)
@@ -957,7 +970,7 @@ Ui.Panel {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: Style.space(4)
-                                    Caption { text: "Папка AI CLI · необязательно" }
+                                    Caption { text: root.t("AI CLI folder · optional") }
                                     Field {
                                         id: agentFolderField
                                         placeholderText: "/home/…/project"
@@ -965,7 +978,7 @@ Ui.Panel {
                                         onTextChanged: if (State.DraftState.active) State.DraftState.agentFolder = text
                                         onActiveFocusChanged: root.rememberDraftFocus("agentFolder", agentFolderField)
                                     }
-                                    Caption { text: "Пусто — домашний каталог. CLI появятся в действиях карточки." }
+                                    Caption { text: root.t("Empty uses the home directory. CLI tools appear in card actions.") }
                                 }
                             }
                             Action {
@@ -973,7 +986,7 @@ Ui.Panel {
                                 leftAlign: true
                                 bordered: false
                                 iconText: State.DraftState.advancedExpanded ? "󰅀" : "󰅂"
-                                text: "Дополнительно · папка и заметка"
+                                text: root.t("Advanced · folder and note")
                                 onClicked: State.DraftState.advancedExpanded = !State.DraftState.advancedExpanded
                             }
                             ColumnLayout {
@@ -983,14 +996,14 @@ Ui.Panel {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: Style.space(4)
-                                    Caption { text: "Папка файлов / VS Code · необязательно" }
+                                    Caption { text: root.t("Files / VS Code folder · optional") }
                                     Field { id: folderField; placeholderText: "/home/…/project"; maximumLength: 1024; onTextChanged: if (State.DraftState.active) State.DraftState.remoteFolder = text; onActiveFocusChanged: root.rememberDraftFocus("folder", folderField) }
-                                    Caption { text: "Папка для SFTP и VS Code, отдельно от папки AI CLI." }
+                                    Caption { text: root.t("Folder for SFTP and VS Code, separate from the AI CLI folder.") }
                                 }
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: Style.space(4)
-                                    Caption { text: "Заметка · не для секретов" }
+                                    Caption { text: root.t("Note · not for secrets") }
                                     Controls.TextArea {
                                         id: noteField
                                         Layout.fillWidth: true
@@ -1017,10 +1030,10 @@ Ui.Panel {
                             Layout.fillWidth: true
                             spacing: Style.space(12)
                             enabled: !root.busy
-                            Caption { text: "Адрес known_hosts: " + root.hostKeyEndpoint }
+                            Caption { text: "known_hosts: " + root.hostKeyEndpoint }
                             Label { text: root.hostKeyRows }
                             Label {
-                                text: "ВАЖНО: ssh-keyscan не доказывает подлинность сервера. Сверьте ВСЕ SHA256 fingerprint с администратором или консолью сервера по независимому доверенному каналу. Не подтверждайте ключ только потому, что он показан здесь."
+                                text: root.t("IMPORTANT: ssh-keyscan does not prove server identity. Verify EVERY SHA256 fingerprint with the administrator or server console over an independent trusted channel. Do not trust a key merely because it appears here.")
                                 color: Color.urgent
                             }
                             Label { text: root.hostKeyMessage }
@@ -1029,13 +1042,13 @@ Ui.Panel {
                                 spacing: Style.space(8)
                                 Action {
                                     id: trustHostKeyButton
-                                    text: "Доверяю после сверки"
+                                    text: root.t("Trust after verification")
                                     enabled: root.hostKeyState === "new" && root.hostKeyToken !== ""
                                     onClicked: root.call({op: "trustHostKey", id: root.hostKeyDeviceId, keys: root.hostKeyKeys, token: root.hostKeyToken})
                                 }
-                                Action { id: cancelHostKeyButton; text: "Отмена"; onClicked: root.showList() }
+                                Action { id: cancelHostKeyButton; text: root.t("Cancel"); onClicked: root.showList() }
                             }
-                            Caption { visible: root.hostKeyState !== "new"; text: "Плагин не заменяет и не удаляет существующие записи known_hosts. Разберите смену ключа отдельно через доверенного администратора." }
+                            Caption { visible: root.hostKeyState !== "new"; text: root.t("The plugin does not replace or remove existing known_hosts entries. Resolve key changes separately with a trusted administrator.") }
                         }
                         ColumnLayout {
                             visible: root.page === "groups"
@@ -1048,19 +1061,19 @@ Ui.Panel {
                                     id: groupEdit
                                     required property var modelData
                                     readonly property int deviceCount: root.profiles.devices.filter(function(d) { return d.group === groupEdit.modelData.id }).length
-                                    readonly property string deleteReason: deviceCount > 0 ? "Для удаления сначала перенесите устройства в другую группу."
-                                        : root.profiles.groups.length <= 1 ? "Последнюю группу удалить нельзя." : ""
+                                    readonly property string deleteReason: deviceCount > 0 ? root.t("Move hosts to another group before deleting it.")
+                                        : root.profiles.groups.length <= 1 ? root.t("The last group cannot be deleted.") : ""
                                     Layout.fillWidth: true
                                     spacing: Style.space(6)
                                     RowLayout {
                                         Layout.fillWidth: true
                                         Label { text: groupEdit.modelData.name; font.bold: true; elide: Text.ElideRight; wrapMode: Text.NoWrap; Layout.minimumWidth: 0 }
-                                        Caption { Layout.fillWidth: false; text: "Устройств: " + groupEdit.deviceCount }
+                                        Caption { Layout.fillWidth: false; text: root.t("Hosts") + ": " + groupEdit.deviceCount }
                                     }
                                     RowLayout {
-                                        Action { text: "Изменить"; iconText: "󰏫"; onClicked: root.editGroup(groupEdit.modelData) }
+                                        Action { text: root.t("Edit"); iconText: "󰏫"; onClicked: root.editGroup(groupEdit.modelData) }
                                         Action {
-                                            text: "Удалить"
+                                            text: root.t("Delete")
                                             bordered: false
                                             foreground: groupEdit.deleteReason === "" ? Color.urgent : root.secondaryText
                                             enabled: groupEdit.deleteReason === ""
@@ -1077,8 +1090,8 @@ Ui.Panel {
                             Layout.fillWidth: true
                             spacing: Style.space(4)
                             enabled: !root.busy
-                            Caption { text: "Название группы" }
-                            Field { id: groupName; placeholderText: "Например, работа"; maximumLength: 100 }
+                            Caption { text: root.t("Group name") }
+                            Field { id: groupName; placeholderText: root.t("For example, work"); maximumLength: 100 }
                         }
                         ColumnLayout {
                             visible: root.page === "transfer"
@@ -1088,57 +1101,69 @@ Ui.Panel {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: Style.space(4)
-                                Caption { text: "JSON-файл · абсолютный путь" }
+                                Caption { text: root.t("JSON file · absolute path") }
                                 Field { id: transferPath; placeholderText: "/home/…/devices.json"; onTextChanged: root.importToken = "" }
                             }
-                            Label { text: "Экспорт"; font.bold: true }
-                            Action { id: notesToggle; property bool checked: false; selected: checked; text: (checked ? "☑ " : "☐ ") + "Включить заметки"; onClicked: checked = !checked }
-                            Action { id: pathsToggle; property bool checked: false; selected: checked; text: (checked ? "☑ " : "☐ ") + "Включить пути"; onClicked: checked = !checked }
-                            Action { text: "Экспорт в новый файл"; onClicked: root.call({op: "export", path: transferPath.text, notes: notesToggle.checked, paths: pathsToggle.checked}) }
+                            Label { text: root.t("Export"); font.bold: true }
+                            Action { id: notesToggle; property bool checked: false; selected: checked; text: (checked ? "☑ " : "☐ ") + root.t("Include notes"); onClicked: checked = !checked }
+                            Action { id: pathsToggle; property bool checked: false; selected: checked; text: (checked ? "☑ " : "☐ ") + root.t("Include paths"); onClicked: checked = !checked }
+                            Action { text: root.t("Export to new file"); onClicked: root.call({op: "export", path: transferPath.text, notes: notesToggle.checked, paths: pathsToggle.checked}) }
                             Ui.PanelSeparator { Layout.fillWidth: true }
-                            Label { text: "Импорт"; font.bold: true }
+                            Label { text: root.t("Import"); font.bold: true }
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: Style.space(4)
-                                Caption { text: "При совпадении адреса, порта и логина" }
+                                Caption { text: root.t("When address, port, and login match") }
                                 Choice {
                                     id: duplicateChoice
                                     value: "skip"
-                                    options: [{value: "skip", label: "Пропустить"}, {value: "replace", label: "Обновить данные, сохранить локальный вход"}]
+                                    options: [{value: "skip", label: root.t("Skip")}, {value: "replace", label: root.t("Update data, keep local authentication")}]
                                     onChanged: function(v) { value = v; root.importToken = "" }
                                 }
                             }
-                            Action { text: "Предпросмотр импорта"; onClicked: { root.importToken = ""; root.call({op: "previewImport", path: transferPath.text, policy: duplicateChoice.value}) } }
-                            Label { visible: root.importToken !== ""; text: root.importSummary + "\nИтоговый список:\n" + root.previewRows }
-                            Caption { text: "Пароли и содержимое ключей не переносятся. Новые устройства используют ключ / SSH-агент. Проверьте адреса и пути в предпросмотре." }
-                            Action { text: "Применить импорт"; enabled: root.importToken !== ""; onClicked: root.call({op: "import", path: transferPath.text, policy: duplicateChoice.value, token: root.importToken}) }
+                            Action { text: root.t("Preview import"); onClicked: { root.importToken = ""; root.call({op: "previewImport", path: transferPath.text, policy: duplicateChoice.value}) } }
+                            Label { visible: root.importToken !== ""; text: root.importSummary + "\n" + root.t("Final list:\n") + root.previewRows }
+                            Caption { text: root.t("Passwords and key contents are not transferred. New hosts use a key / SSH agent. Verify addresses and paths in the preview.") }
+                            Action { text: root.t("Apply import"); enabled: root.importToken !== ""; onClicked: root.call({op: "import", path: transferPath.text, policy: duplicateChoice.value, token: root.importToken}) }
                         }
                         ColumnLayout {
                             visible: root.page === "settings"
                             Layout.fillWidth: true
                             spacing: Style.space(12)
                             enabled: !root.busy && root.settingsLoaded
-                            Label { text: "Подключение"; font.bold: true }
+                            Label { text: root.t("General"); font.bold: true }
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: Style.space(4)
-                                Caption { text: "Терминал по умолчанию" }
+                                Caption { text: root.t("Language") }
+                                Choice {
+                                    id: languageChoice
+                                    options: [{value: "en", label: "English"}, {value: "ru", label: "Русский"}]
+                                    onChanged: function(v) { value = v }
+                                }
+                            }
+                            Ui.PanelSeparator { Layout.fillWidth: true }
+                            Label { text: root.t("Connection"); font.bold: true }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: Style.space(4)
+                                Caption { text: root.t("Default terminal") }
                                 Choice {
                                     id: terminalChoice
                                     options: root.terminals.map(function(t) {
-                                        return {value: t.value, label: t.label + (t.available ? "" : " · не установлен")}
+                                        return {value: t.value, label: t.label + (t.available ? "" : " · " + root.t("not installed"))}
                                     })
                                     onChanged: function(v) { value = v }
                                 }
                             }
-                            Caption { text: "Общий для кнопки SSH и запуска всех AI CLI на всех устройствах. VS Code и SFTP открываются отдельно." }
+                            Caption { text: root.t("Used by SSH and every AI CLI on all hosts. VS Code and SFTP open separately.") }
                             Caption {
                                 visible: root.settingsLoaded && !root.terminalAvailable
-                                text: "Этот терминал не найден в PATH. Установите его самостоятельно или выберите доступный."
+                                text: root.t("This terminal was not found in PATH. Install it yourself or select an available terminal.")
                             }
                             Ui.PanelSeparator { Layout.fillWidth: true }
-                            Caption { text: "Изменения применяются после сохранения к новым подключениям. Уже открытые терминалы не затрагиваются." }
-                            Caption { text: "Настройки хранятся отдельно от устройств и не включаются в их импорт / экспорт." }
+                            Caption { text: root.t("Saved changes apply to new connections. Existing terminal windows are unaffected.") }
+                            Caption { text: root.t("Settings are stored separately from hosts and are excluded from import / export.") }
                         }
                     }
                 }
@@ -1150,15 +1175,17 @@ Ui.Panel {
                     RowLayout {
                         Layout.fillWidth: true
                         enabled: !root.busy
-                        Action { text: "Отмена"; bordered: false; onClicked: root.navigateBack() }
+                        Action { text: root.t("Cancel"); bordered: false; onClicked: root.navigateBack() }
                         Item { Layout.fillWidth: true }
                         Action {
-                            text: root.busy && ["saveDevice", "saveGroup", "saveSettings"].indexOf(request.operation) >= 0 ? "Сохраняем…" : "Сохранить"
-                            enabled: root.page !== "settings" || (root.settingsLoaded && root.terminalAvailable && terminalChoice.value !== root.globalConfig.defaultTerminal)
+                            text: root.busy && ["saveDevice", "saveGroup", "saveSettings"].indexOf(request.operation) >= 0 ? root.t("Saving…") : root.t("Save")
+                            enabled: root.page !== "settings" || (root.settingsLoaded && root.terminalAvailable
+                                     && (terminalChoice.value !== root.globalConfig.defaultTerminal
+                                         || languageChoice.value !== root.globalConfig.language))
                             foreground: Color.accent
                             onClicked: {
                                 if (root.page === "device") root.saveDevice()
-                                else if (root.page === "settings") root.call({op: "saveSettings", settings: {version: 1, defaultTerminal: terminalChoice.value}})
+                                else if (root.page === "settings") root.call({op: "saveSettings", settings: {version: 1, defaultTerminal: terminalChoice.value, language: languageChoice.value}})
                                 else root.call({op: "saveGroup", id: root.groupId, name: groupName.text})
                             }
                         }
@@ -1170,10 +1197,10 @@ Ui.Panel {
                 anchors.fill: parent
                 z: 20
                 opened: root.confirmKind !== ""
-                message: root.confirmKind === "discardDraft" ? "Выйти без сохранения и удалить черновик?"
-                    : root.confirmKind === "deleteDevice" ? "Удалить устройство безвозвратно?" : "Удалить группу безвозвратно?"
-                cancelText: root.confirmKind === "discardDraft" ? "Продолжить" : "Отмена"
-                confirmText: root.confirmKind === "discardDraft" ? "Не сохранять" : "Удалить"
+                message: root.confirmKind === "discardDraft" ? root.t("Leave without saving and discard the draft?")
+                    : root.confirmKind === "deleteDevice" ? root.t("Delete this host permanently?") : root.t("Delete this group permanently?")
+                cancelText: root.t(root.confirmKind === "discardDraft" ? "Continue" : "Cancel")
+                confirmText: root.t(root.confirmKind === "discardDraft" ? "Discard" : "Delete")
                 onCanceled: {
                     root.confirmKind = ""
                     root.confirmId = ""

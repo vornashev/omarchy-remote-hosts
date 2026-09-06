@@ -1,461 +1,148 @@
-# Удалённые хосты — Omarchy
+# Omarchy Remote Hosts
 
-Публичный репозиторий: <https://github.com/vornashev/omarchy-remote-hosts>  
-Идентификатор плагина: `tema.remote-devices`
+[Russian version](README.ru.md)
 
-Разработку ведите в этом репозитории. После проверок, по отдельному запросу на
-развёртывание, обновляйте установленную копию командой `scripts/deploy-local`;
-symlink намеренно не используется: валидатор Omarchy запрещает symlink в пакетах.
+An Omarchy bar plugin for managing remote development hosts. It combines SSH,
+SFTP, VS Code Remote-SSH, strict host-key verification, and interactive AI CLI
+launchers in one native QML/Quickshell panel.
 
-Локальный native QML/Quickshell bar-widget для Omarchy **4.0.2-1**. Каталог
-объединяет SSH, SFTP, VS Code и интерактивные AI CLI для удалённых хостов.
-Плагин **не включает себя программно**. Начальный список пуст: реальные адреса
-нужно добавить самостоятельно. Лимит — 100 хостов и 50 групп.
+Plugin ID: `tema.remote-hosts`
 
-## Установка
+## Features
 
-Клонируйте репозиторий и запустите проверки из его корня:
+- Host catalog with groups, notes, endpoint availability, and up to 100 hosts.
+- SSH in Ghostty, Kitty, Alacritty, or foot.
+- SFTP mounts through SSHFS and opens them in Nautilus.
+- Isolated VS Code Remote-SSH profiles without changing `~/.ssh/config`.
+- Per-host AI CLI selection and an optional project directory.
+- JSON import/export without passwords.
+- Password storage through Secret Service only.
+- English UI by default, with Russian selectable in global settings.
+
+Supported interactive AI CLIs:
+
+| Agent | Remote command |
+| --- | --- |
+| Pi | `pi` |
+| Codex | `codex` |
+| Claude | `claude` |
+| OpenCode | `opencode` |
+| Gemini CLI | `gemini` |
+| Aider | `aider` |
+| Goose | `goose session` |
+| Amp | `amp` |
+| GitHub Copilot CLI | `copilot` |
+| Qwen Code | `qwen` |
+
+The commands and Goose's `session` argument are fixed in the backend. The
+plugin does not accept arbitrary executables, arguments, shell fragments, or
+auto-approval flags.
+
+## Requirements
+
+- Omarchy Shell / Quickshell.
+- Python 3 standard library.
+- OpenSSH client tools: `ssh`, `ssh-keyscan`, and `ssh-keygen`.
+- One supported terminal.
+- Optional: `secret-tool` and an unlocked Secret Service for passwords.
+- Optional: `sshfs`, FUSE 3, and Nautilus for SFTP.
+- Optional: VS Code with the official `ms-vscode-remote.remote-ssh` extension.
+- Optional: `wl-copy` for copying host addresses.
+
+Remote AI CLIs must already be installed, authenticated, and available in the
+remote user's login-shell `PATH`. The plugin does not install remote software.
+
+## Installation
 
 ```bash
 git clone https://github.com/vornashev/omarchy-remote-hosts.git
 cd omarchy-remote-hosts
+
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests
+omarchy plugin validate "$PWD"
+scripts/qml-lint
+scripts/deploy-local
+
+omarchy plugin enable tema.remote-hosts
+# Optional:
+omarchy bar move tema.remote-hosts --section right
 ```
+
+`scripts/deploy-local` validates the source, copies it to
+`~/.config/omarchy/plugins/tema.remote-hosts`, sets the askpass executable bit,
+and rescans shell plugins. It does not install packages or edit
+`~/.ssh/config`.
+
+## Language and terminal
+
+Open the catalog and select **Settings**:
+
+- **Language:** English or Russian. English is the default for a fresh install.
+- **Default terminal:** Ghostty, Kitty, Alacritty, or foot.
+
+The saved terminal applies to new SSH and AI CLI windows on every host. Missing
+terminals cannot be selected, and there is no silent fallback. VS Code and SFTP
+remain separate actions. Language and terminal settings are machine-local and
+excluded from profile import/export.
+
+## Stored data and upgrades
+
+Profiles and global settings are stored under:
+
+```text
+$XDG_DATA_HOME/tema.remote-hosts/
+```
+
+The default is `~/.local/share/tema.remote-hosts/`. The directory uses mode
+0700; data files and the lock use 0600. Writes use a same-directory temporary
+file, `fsync`, and atomic replacement.
+
+On first start, version 0.7 safely moves a valid private data directory from
+the previous plugin namespace when the new directory does not exist. Unsafe
+permissions and symlinks fail closed. Password entries are migrated from the
+previous Secret Service application attribute on first lookup, then the old
+entry is cleared.
+
+Profile schema remains version 1:
+
+```text
+{version, groups, devices}
+```
+
+Unknown fields, secret-bearing fields, duplicate JSON keys, invalid group
+references, and duplicate endpoint tuples are rejected.
+
+## Security model
+
+- Passwords never enter argv, environment variables, profile JSON, logs,
+  clipboard contents, or helper responses.
+- Password flow is stdin/pipe-based through a minimal askpass executable.
+- SSH uses fixed argv arrays and `-F /dev/null`; local commands and forwarding
+  are disabled.
+- Password authentication requires `StrictHostKeyChecking=yes`.
+- A new host key must be reviewed by SHA256 fingerprint and explicitly trusted.
+- Conflicting, changed, revoked, or certificate-authority entries are never
+  replaced automatically.
+- The plugin does not read private-key contents.
+- Imported profiles never claim that a password is available.
+- Runtime files, mounts, ownership, permissions, symlinks, and file sizes are
+  validated before use.
+
+`ssh-keyscan` does not authenticate a server. Verify every displayed
+fingerprint through an independent trusted channel before accepting it.
+
+## Development
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests
 omarchy plugin validate "$PWD"
 scripts/qml-lint
-scripts/deploy-local
 ```
 
-`scripts/deploy-local` копирует только файлы плагина в
-`~/.config/omarchy/plugins/tema.remote-devices/`, не переносит `.git`/`AGENTS.md`
-и обновляет реестр Omarchy Shell. Профили и секреты хранятся отдельно и не
-попадают в репозиторий.
+Tests use synthetic endpoints, temporary directories, and fake external
+programs. They do not connect to real hosts or read real credentials, keys,
+mounts, profiles, or `known_hosts`.
 
-Идентификатор `tema.remote-devices` намеренно сохранён: он уже используется
-установленными копиями как namespace профилей и записей Secret Service.
-Переименование репозитория не скрывает существующие устройства и пароли.
-
-Для ручной установки файлы должны находиться в
-`~/.config/omarchy/plugins/tema.remote-devices/`, включая `tests/`.
-
-```bash
-chmod 700 ~/.config/omarchy/plugins/tema.remote-devices/askpass.py
-omarchy plugin validate ~/.config/omarchy/plugins/tema.remote-devices
-# Следующие команды выполняет пользователь/ревьюер, НЕ установщик:
-omarchy-shell shell rescanPlugins
-omarchy plugin enable tema.remote-devices
-# Необязательно:
-omarchy bar move tema.remote-devices --section right
-# Отключение:
-omarchy plugin disable tema.remote-devices
-```
-
-Никаких установок пакетов, изменений `shell.json`, `~/.ssh/config`, глобальных
-настроек VS Code или `/usr/share/omarchy` код плагина не делает. Команда enable
-выше, конечно, сохраняет выбор в shell.json средствами самого Omarchy.
-
-## Использование
-
-- Кнопка в баре открывает панель с непрозрачным фоном. При открытии каталога
-  проверяются Ping и TCP-порт; `↻` повторяет проверку. Средняя кнопка бара —
-  проверка после первой загрузки. При возврате в активный редактор проверка
-  не запускается и черновик не изменяется.
-- Кнопка **SSH** в карточке открывает обычный SSH в выбранном терминале; фон карточки
-  больше не запускает подключение. При первом подключении панель показывает
-  алгоритмы и SHA256 fingerprint host key. После внешней сверки и явного
-  подтверждения подключение повторяется автоматически.
-- Шеврон раскрывает подписанные действия: **Файлы** (SFTP), **VS Code**,
-  **Изменить** и **Ещё**. Выбранные агенты находятся отдельной строкой
-  AI CLI. В «Ещё» доступны копирование **только host**, проверка ключа сервера,
-  отключение смонтированного SFTP и удаление устройства с подтверждением.
-  Занятую чужим mount точку SFTP открыть нельзя. Ограничение VS Code для
-  парольного входа объясняется рядом с действиями.
-- Статус и ping — отдельная кнопка повторной проверки. Её подсказка содержит
-  результаты Ping/TCP, возраст проверки и напоминание: открытый порт не
-  подтверждает успешную аутентификацию.
-- Каталог, редактор, группы и импорт/экспорт имеют отдельные заголовки и
-  контекстную навигацию. В каталоге скрыты пустые группы; в управлении группами
-  видны все группы и число устройств. Нельзя удалить последнюю или непустую
-  группу: кнопка недоступна, причина показана рядом. Создание и переименование
-  возвращают к группам.
-- У полей редактора постоянные подписи; имя, адрес, пользователь, компактный
-  SSH-порт, группа и аутентификация видны в основной части. Секции **AI CLI**
-  и **Дополнительно · папка и заметка** раскрываются отдельно.
-  Чипсы отмечают CLI, уже установленные на конкретном сервере; можно включить
-  несколько или ни одного. Они переносятся по ширине панели, а заголовок показывает
-  число выбранных CLI. Необязательная **Папка AI CLI**
-  задаёт каталог запуска этих CLI; пустое значение означает домашний каталог.
-  **Папка файлов / VS Code** задаётся отдельно.
-  Кнопка «Проверить доступность» проверяет введённые host и порт до сохранения:
-  показывает Ping и TCP SSH отдельно; логин, пароль, заметка и пути в probe не передаются.
-  Для ключа можно задать абсолютный путь; пустое поле использует обычные ключи
-  OpenSSH и SSH-агент. Содержимое файла ключа плагин не читает.
-- VS Code Remote-SSH доступен для key/agent-профилей через изолированный runtime;
-  password-профили остаются заблокированы до появления безопасного password broker.
-- **Импорт / экспорт**: абсолютный путь к JSON-файлу, экспорт только в **новый**
-  файл (0600), импорт только после предпросмотра. Диалога файлового менеджера нет.
-- **Сохранить / Отмена** закреплены вне прокрутки редактора устройства и группы.
-  Tab/Enter управляют кнопками и полями; сфокусированные элементы формы
-  прокручиваются в видимую область. Это обычные формы, не vim-навигация.
-- Escape и клик вне панели временно закрывают её. Черновик устройства, включая
-  пароль и раскрытые секции, остаётся только в общем QML singleton в памяти
-  при закрытии popup и переходе между мониторами. «Назад» и «Отмена» в редакторе
-  устройства запрашивают подтверждение удаления черновика; успешное сохранение
-  очищает его. Перезапуск shell уничтожает несохранённый черновик.
-- Сообщения об успехе исчезают через пять секунд. Ошибка остаётся до закрытия
-  сообщения, новой операции или перехода на другой экран; сообщения прежнего
-  экрана не остаются над новой формой.
-
-## Глобальные настройки
-
-Шестерёнка в шапке каталога открывает **Настройки → Терминал по умолчанию**.
-Доступны Ghostty, Kitty, Alacritty и foot; отсутствие программы в PATH отмечено
-в списке. Сохранить недоступный терминал нельзя. Плагин не устанавливает программы.
-До первого изменения используется Ghostty.
-
-Выбор общий для кнопки **SSH** и запуска всех AI CLI на всех устройствах
-и мониторах. Нажмите **Сохранить**: новые подключения используют выбранный
-терминал, уже открытые окна не изменяются. «Отмена» или возврат к каталогу
-не сохраняют выбор. VS Code и SFTP остаются отдельными действиями.
-Если сохранённый терминал впоследствии удалён, запуск завершается ошибкой —
-автоматического перехода на другой терминал нет.
-
-Настройки локальны для этой машины и не входят в импорт / экспорт устройств.
-Историческое поле `client` в профилях сохраняется для совместимости схемы v1,
-но не переопределяет глобальный терминал. Запросы `launch` без `client` и
-`launchAgent` читают актуальную настройку в backend при каждом запуске.
-
-Helper предоставляет `getSettings` и `saveSettings` с объектом
-`settings: {"version": 1, "defaultTerminal": "ghostty"}` для сохранения.
-Ответ содержит `globalSettings` и список `terminals` с признаками `available`.
-Принимается только фиксированный идентификатор терминала: произвольные команды,
-пути к executable, дополнительные аргументы и неизвестные поля запрещены.
-
-## Клиенты и зависимости
-
-| Функция | Зависимости / реальное состояние |
-| --- | --- |
-| UI | установленный Omarchy shell, Quickshell, QtQuick/Controls/Layouts, `qs.Ui`, `qs.Commons` |
-| Данные | `python3`, только stdlib, Linux (`fcntl`, `O_NOFOLLOW`) |
-| Терминал | один из `ghostty`, `kitty`, `alacritty`, `foot` и OpenSSH `ssh`; argv без локального shell |
-| Удалённые агенты | выбранный CLI должен быть установлен и настроен в `PATH` удалённого пользователя |
-| Первый host key | OpenSSH `ssh-keyscan`, `ssh-keygen`; только после внешней сверки и явного Trust |
-| Пароли | `secret-tool` **и работающий разблокируемый Secret Service** в DBus-сессии |
-| Ping | iputils `ping`; отсутствие/тайм-аут видны отдельно от TCP |
-| SFTP | `sshfs` + FUSE3 + `nautilus`; `sshfs` устанавливается отдельно через `omarchy pkg add sshfs` |
-| Буфер | Wayland `wl-copy` (найден локально) |
-| VS Code | `code` + официальный `ms-vscode-remote.remote-ssh` 0.128.0; только key/agent profiles |
-
-### Терминалы и сохранённый пароль
-
-Используются фиксированные команды: `ghostty --wait-after-command=true -e`,
-`kitty --hold`, `alacritty --hold -e` или `foot --hold --`, за которыми следуют
-Python, локальный helper и UUID профиля. Окно остаётся открытым после завершения
-команды, чтобы результат можно было прочитать. Пароль не передаётся в argv.
-Для удалённой сессии задаётся `TERM=xterm-256color`: сервер может не содержать
-terminfo выбранного терминала, из-за чего prompt и TUI отключают цвета.
-Промежуточный helper перечитывает профиль и делает `exec` OpenSSH, не запускает
-локальный shell. Используется `ssh -F /dev/null`: **пользовательский и системный
-ssh_config игнорируются**, поэтому нет ProxyCommand, Match exec, Host aliases,
-JumpHost и неявных forwarding из конфигов. Это сознательное ограничение.
-Стандартные known_hosts и ключи по умолчанию OpenSSH остаются в использовании.
-Явно установлены `PermitLocalCommand=no`, `ClearAllForwardings=yes`.
-
-### Удалённые AI CLI и рабочая папка
-
-После успешного SSH-входа быстрая кнопка запускает фиксированный интерактивный CLI:
-
-| Агент | ID в `agents` | Команда на сервере |
-| --- | --- | --- |
-| Pi | `pi` | `pi` |
-| Codex | `codex` | `codex` |
-| Claude | `claude` | `claude` |
-| [OpenCode](https://opencode.ai/docs/cli/) | `opencode` | `opencode` |
-| [Gemini CLI](https://geminicli.com/docs/cli/cli-reference/) | `gemini` | `gemini` |
-| [Aider](https://aider.chat/docs/usage.html) | `aider` | `aider` |
-| [Goose](https://github.com/aaif-goose/goose/blob/main/documentation/docs/guides/goose-cli-commands.md) | `goose` | `goose session` |
-| [Amp](https://ampcode.com/docs/markdown/cli) | `amp` | `amp` |
-| [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-copilot-cli) | `copilot` | `copilot` |
-| [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/users/quickstart/) | `qwen` | `qwen` |
-
-Для Goose подкоманда `session` фиксирована в backend: она открывает интерактивную
-сессию. GitHub Copilot запускается самостоятельным `copilot`, не старым расширением
-`gh copilot`. Флаги автоматического разрешения действий или обхода подтверждений
-плагин не добавляет; собственные настройки безопасности CLI остаются на сервере.
-
-В действиях карточки присутствуют только чипсы, включённые в профиле этого сервера.
-Произвольные команды, пути к executable и пользовательские аргументы не
-принимаются. CLI должен быть заранее установлен, авторизован и настроен на сервере;
-плагин ничего туда не устанавливает. Если бинарник отсутствует, терминал остаётся
-открытым и показывает ошибку remote shell.
-
-Для интерактивного агента OpenSSH запрашивает PTY через `-t`. SSH по умолчанию
-выполняет remote-команду в неинтерактивной оболочке, где часто отсутствуют PATH
-из `.bashrc`/`.zshrc`. Поэтому агент запускается через интерактивную login shell
-пользователя (`$SHELL -lic`), как при обычном входе, и видит её настроенный PATH.
-Внутренняя команда имеет вид `cd -- '/home/user/project' && exec codex`.
-
-Remote-команда неизбежно интерпретируется оболочкой удалённого пользователя,
-поэтому путь проходит консервативную проверку, не допускающую кавычки, `$`,
-backslash, управляющие и shell-метасимволы, а затем целиком shell-quoted как один
-аргумент `-c`. По кнопке **SSH** remote-команда вообще не передаётся: открывается
-обычная SSH-сессия независимо от выбранных AI CLI и их папки.
-
-В режиме ключ/агент сохраняется `StrictHostKeyChecking=ask`, но для адреса без
-записи known_hosts плагин сначала открывает безопасную проверку fingerprint в
-панели. Изменённые ключи не обходятся: итоговую строгую проверку выполняет OpenSSH.
-
-### Первый контакт: Host key в панели
-
-Для сохранённого пароля используется **`StrictHostKeyChecking=yes`**: неизвестный
-или изменённый ключ отклоняется до запроса секрета. Поэтому первый запуск терминала
-для адреса без записи known_hosts автоматически открывает проверку `Host key` в панели:
-
-1. Плагин запускает `ssh-keyscan -T 5 -p PORT -t rsa,ecdsa,ed25519 -- HOST`
-   как массив argv, без shell и без пароля. Внешний timeout helper — 8 секунд;
-   stdout ограничен 64 КиБ и слишком шумный процесс завершается до дальнейшего чтения.
-2. Панель показывает каждый алгоритм и `SHA256:…`. **Сам ssh-keyscan не
-   аутентифицирует сервер:** сверьте все fingerprint с администратором, локальной
-   консолью сервера или другим независимым доверенным каналом.
-3. Только после явной кнопки «Доверяю после сверки» helper повторно сканирует
-   сервер и требует точного совпадения endpoint, набора ключей и токена просмотра.
-4. Совпавшие ключи одной append-операцией записываются в стандартный
-   `~/.ssh/known_hosts`; после этого панель автоматически повторяет подключение,
-   а OpenSSH выполняет обычную строгую проверку записанного ключа.
-
-Для порта 22 используется стандартный token `host`, для другого порта —
-`[host]:port`; это одинаково покрывает DNS, IPv4 и IPv6. Строки не для ожидаемого
-адреса, неизвестные алгоритмы, неверный base64 или несовпадение типа внутри SSH
-key blob отклоняются. До записи `ssh-keygen -F` проверяет обычные и хэшированные
-записи в `known_hosts`, `known_hosts2` и системных host-файлах. Совпадающий уже
-известный ключ не дублируется. Другой ключ и записи `@revoked`/`@cert-authority`
-блокируют действие: плагин **никогда не заменяет и не удаляет** их.
-
-Плагин никогда не использует `StrictHostKeyChecking=no` или `accept-new`.
-
-- Только OpenSSH password authentication; pubkey и keyboard-interactive отключены,
-  `NumberOfPasswordPrompts=1`. MFA/OTP/password-change диалоги не поддерживаются.
-- `SSH_ASKPASS_REQUIRE=force` направляет запрос в `askpass.py`. Он выдаёт пароль
-  **только** для точного `login@host's password:` и неизменного profile ID +
-  хэша host/port/login. `SSH_ASKPASS_PROMPT=confirm`, `none` и неизвестные значения,
-  запросы fingerprint, passphrase ключа, чужого host/login — отказ **до lookup**.
-- Host, login и ID не являются секретами. Пароль не помещается в argv/env,
-  ответы JSON, clipboard, файлы или диагностические сообщения. Из Secret Service
-  он идёт по pipe прямо в OpenSSH askpass, не через QML.
-- Поле нового пароля идёт QML → JSON stdin helper → stdin secret-tool; stdout/
-  stderr secret-tool не логируются и не возвращаются UI. Поле и отправленный
-  буфер QML очищаются после отправки, сохранения или явной отмены формы. Временно
-  закрытый popup сохраняет черновик формы (включая поле пароля) только в общем
-  QML singleton процесса Omarchy Shell, чтобы можно было переключиться в другое
-  окно или к панели второго монитора и вернуться.
-  Перезапуск оболочки уничтожает такой черновик. Обнуление всех копий в managed
-  памяти QML/Python не гарантируется.
-- Пароль нельзя сохранить без Secret Service. Любая ошибка/тайм-аут — отказ без
-  plaintext fallback. Смена host/port/login требует ввести пароль заново.
-
-Проверен точный шаблон prompt в установленном `/usr/bin/ssh`
-(`%s@%s's password:`), `SSH_ASKPASS_REQUIRE` в установленном `ssh(1)` и аргументы
-через `ssh -G` без соединения. Есть unit-тесты и запуск executable askpass с
-**поддельным** secret-tool в temp PATH. Реальная аутентификация/host-key rejection
-на SSH-сервере и реальный Secret Service в этой поставке **не тестировались**.
-
-### VS Code Remote-SSH
-
-После явного разрешения владельца установлено официальное расширение
-`ms-vscode-remote.remote-ssh` 0.128.0. Для каждого запуска helper проверяет его
-наличие через ограниченный `code --list-extensions`, создаёт приватный runtime-профиль
-в `$XDG_RUNTIME_DIR/tema.remote-devices/vscode-…` и записывает туда только отдельный
-`User/settings.json` с `remote.SSH.configFile` и сгенерированный SSH config 0600.
-Обычные настройки VS Code и `~/.ssh/config` не читаются и не изменяются.
-
-Config использует синтетический alias, проверенные host/login/port, строгий host key,
-отключённые local command, agent/X11 forwarding и password/keyboard-interactive auth.
-Явный IdentityFile поддерживается; без него используется SSH-agent/стандартный ключ.
-TCP forwarding не отключается, потому что Remote-SSH использует его для связи с
-VS Code Server. Запуск выполняется без local shell через документированный extension
-CLI: `code --remote ssh-remote+ALIAS /remote/folder` и одобренный изолированный
-`--user-data-dir`.
-
-Автоматическая password-аутентификация намеренно не реализована: Remote-SSH управляет
-собственным много-процессным askpass flow, и безопасно переиспользовать credential
-плагина без отдельного проверенного брокера нельзя. Для VS Code выберите key/agent;
-password-профиль получает фиксированную ошибку до создания runtime config.
-
-### SFTP через SSHFS
-
-Плагин больше не передаёт `sftp://` напрямую в GVfs: его независимый диалог не
-умел использовать credential профиля и мог бесконечно повторять запрос пароля.
-Теперь helper монтирует выбранную рабочую папку через OpenSSH-совместимый `sshfs`
-в приватный каталог `$XDG_RUNTIME_DIR/tema.remote-devices/` (fallback:
-`/run/user/UID/tema.remote-devices/`), а после подтверждённого успеха открывает
-локальный `file://` mountpoint в Nautilus.
-
-Для password-профиля секрет извлекается только непосредственно перед mount и
-передаётся `sshfs -o password_stdin` через stdin — не URI, argv, env, файл или лог.
-Для key-профиля применяется выбранный IdentityFile; иначе используются SSH-agent
-и стандартные ключи. В обоих случаях используются `-F /dev/null`,
-`StrictHostKeyChecking=yes`, фиксированный порт и отключённые forwarding/local commands.
-Неизвестный host key сначала проходит тот же preview, внешнюю сверку и явный Trust,
-что обычный SSH. Повторное открытие уже смонтированного endpoint не запрашивает секрет.
-
-SSHFS устанавливается отдельно через `omarchy pkg add sshfs`. Панель показывает
-endpoint-bound состояние mount, повторно открывает готовое подключение без секрета
-и предлагает «Отключить SFTP» через фиксированный `fusermount3 -u -- MOUNTPOINT`.
-Принадлежность mount подтверждается одновременно типом `fuse.sshfs`, точным source
-и приватным marker с host, портом, логином и папкой. Посторонний mount на ожидаемом
-пути не открывается и не размонтируется. Изменение endpoint/рабочей папки, удаление
-профиля и replacement-import блокируются, пока его SFTP подключён.
-Пустые устаревшие runtime-каталоги удаляются безопасно, но активные mount автоматически
-не отключаются. Ошибки возвращаются как фиксированные категории без stderr.
-
-## Хранение и безопасность
-
-При первом доверии отсутствующий `~/.ssh` создаётся с 0700, `known_hosts` и
-служебный lock — с 0600. Существующие объекты не получают `chmod`: каталог должен
-принадлежать текущему UID и не допускать запись group/other, а `known_hosts` —
-быть обычным принадлежащим пользователю файлом без записи group/other (обычный
-0644 допустим). Symlink отклоняется. `flock` сериализует операции этого плагина,
-а одна запись с `O_APPEND`, последующим `fsync` не перезаписывает параллельное
-содержимое файла. Сторонние программы обязаны сами корректно координировать свои
-изменения стандартного known_hosts.
-
-`$XDG_DATA_HOME/tema.remote-devices/profiles.json`, по умолчанию
-`~/.local/share/tema.remote-devices/profiles.json`. Каталог 0700, JSON и `.lock`
-0600, владелец — текущий UID. Небезопасные права/symlink на этих объектах вызывают
-отказ, а не молчаливое исправление. `flock` сериализует доступ; запись — временный
-файл в том же каталоге, `fsync`, atomic replace, `fsync` каталога. Источник плагина
-не содержит профилей и не служит хранилищем runtime-данных.
-
-Глобальные настройки лежат рядом, в `settings.json` (версия 1, поле
-`defaultTerminal`). Для них действуют те же проверки владельца, прав 0600,
-symlink, лимита 1 МиБ, общий `.lock` и атомарная запись. Неизвестные поля,
-некорректная версия и терминал вне allowlist отклоняются. Экспорт профилей
-не может создать или перезаписать этот файл. Пароли в настройках не хранятся.
-
-Secret Service attributes: `application=tema.remote-devices`, UUID `profile`,
-SHA-256 `endpoint` (host/port/login). Только эти точные атрибуты используются для
-store/lookup/clear; поисков по существующим чужим секретам нет. Удаление профиля/
-смена входа удаляют его старую credential. Прочие credentials не затрагиваются.
-
-JSON-файл и Secret Service не образуют общей транзакции. Старый рабочий пароль
-никогда не очищается до успешной атомарной публикации нового профиля; при отказе
-записи новый неопубликованный секрет удаляется насколько возможно. Аварийное
-завершение процесса всё ещё может оставить неиспользуемую credential, но не должно
-удалить пароль профиля, который остался на диске. Повторно сохраните профиль после
-устранения ошибки.
-Неиспользуемую credential можно удалить в менеджере паролей по label
-`Omarchy remote device` и **точным** атрибутам профиля. Удаление папки плагина или
-экспорт не удаляет credentials. Удаляйте профили через UI до удаления плагина.
-
-Плагин — несандбоксированный код текущего пользователя. Он не защищает от root,
-вредоносного кода того же UID, дампа памяти или скомпрометированного PATH/клиента.
-Secret Service тоже не является sandbox между приложениями одного пользователя.
-Не записывайте секреты в имя/заметку/путь: их содержимое семантически не распознаётся
-как пароль и будет экспортировано, если явно включить соответствующие поля.
-
-Ввод намеренно ограничен: ASCII DNS (для IDN — punycode), IPv4/IPv6 без zone ID,
-логин `[A-Za-z0-9_][A-Za-z0-9_.-]*`, порт 1–65535. Пути — абсолютные ASCII POSIX,
-буквы/цифры/пробелы и `_. /@+,-`, без `..`, `~`, `%`, `$`, кавычек, backslash,
-управляющих и shell-метасимволов. ID AI CLI выбирается только из фиксированного
-набора в таблице выше, а executable и аргументы заданы в backend. Постоянный SSH config не
-генерируется; только VS Code получает приватный runtime config из проверенных полей.
-Нет локального `shell=True`, импортируемых proxy options или свободных команд;
-ограниченная remote-команда строится только из проверенного пути и выбранного агента.
-
-## JSON и проверки
-
-Схема v1: `{version: 1, groups: [{id, name, collapsed}], devices: [...]}`.
-Устройство содержит только `id, name, host, port, login, group, note, auth,
-keyPath, client, remoteFolder, launchMode, customExecutable, agents, agentFolder`;
-ID — UUID. Старые профили читаются без потери данных. Если `agents` отсутствует,
-известный `launchMode` становится соответствующим выбранным чипом; явно заданный
-`agents`, в том числе пустой список, имеет приоритет. Выбор новых CLI сохраняется
-и переносится импортом / экспортом в той же схеме v1. Экспорт собственного списка даёт
-готовый образец. Неизвестные поля (включая password/privateKey/secretId), повторы
-JSON-ключей, некорректные связи групп и повтор host+port+login отклоняются.
-Размер входного JSON и точной сериализации сохраняемого каталога ≤1 МиБ.
-Превышение отклоняется до записи и до изменения секретов при сохранении устройства;
-предпросмотр импорта также проверяет суммарный размер.
-
-Экспорт всегда сбрасывает auth в `agent`, исключает заметки/пути по умолчанию,
-никогда не читает ключи или Secret Service. Заметки/пути включаются двумя явными
-переключателями. Импорт новых устройств назначает новые UUID и вход ключ/агент;
-группы объединяются по имени без учёта регистра. Дубликаты host+port+login либо
-пропускаются, либо получают новые метаданные, сохраняя **локальный** auth/keyPath.
-Предпросмотр показывает итоговый список, пути, заметки и счётчики. Подтверждение
-связано хэшем с исходной базой, содержимым файла и политикой; при изменении любого
-из них нужен новый просмотр. Сеть и клиенты при импорте не запускаются.
-
-Статусы не сохраняются на диск. До 8 параллельных killable Python-процессов:
-в каждом ping ≤2 с, TCP общий бюджет 2 с (до 8 DNS-адресов); весь child ≤6 с,
-включая потенциально зависший DNS. При зависании child обе проверки показывают
-тайм-аут. 100 устройств — до 13 волн (~78 с); UI остаётся отзывчивым, повторная
-проверка не запускается параллельно. У каждого результата есть UTC timestamp,
-UI показывает локальное время; результат старого endpoint не показывается для
-изменённого профиля. ICMP и TCP независимы. TCP open не доказывает наличие SSH,
-верность host key, логина или пароля.
-
-## Воспроизводимая валидация
-
-```bash
-cd ~/.config/omarchy/plugins/tema.remote-devices
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
-omarchy plugin validate "$PWD"
-# qs — виртуальный import root Quickshell; для обычного qmllint нужен mapping:
-tmp=$(mktemp -d)
-mkdir "$tmp/qs"
-ln -s /usr/share/omarchy/shell/Ui "$tmp/qs/Ui"
-ln -s /usr/share/omarchy/shell/Commons "$tmp/qs/Commons"
-/usr/lib/qt6/bin/qmllint -I "$tmp" -I /usr/lib/qt6/qml Widget.qml
-rm -r "$tmp"
-```
-
-78 unittest tests: строгая валидация/injection, атомарность/права, CRUD, import
-preview/staleness/дубликаты, export redaction, argv, ошибки/тайм-ауты status и
-Secret Service, точный askpass, первый host-key scan/trust/rescan, IPv4/IPv6 и
-нестандартный порт, конфликтующие/специальные записи, symlink/права, реальные
-процессы с **поддельным** secret-tool.
-Регрессия Goose исполняет команду через поддельный CLI и проверяет, что запускается
-именно интерактивная `session` в рабочей папке с пробелами.
-Глобальные настройки проверяются на сохранение между экземплярами Store,
-независимость от профилей, запрет неизвестных/секретных полей, небезопасных файлов,
-отсутствующего терминала и экспорт поверх settings.json. Выбранный терминал
-используется для SSH/AI; проверка host key обязательна и после его изменения.
-Дополнительно проверяются отказ при превышении размера без потери данных и
-запуск временной копии askpass без PYTHONDONTWRITEBYTECODE: байткод не создаётся,
-чтобы не вызывать перезагрузку плагинов оболочкой.
-Все данные тестов во временных каталогах. Реальных подключений, клиентов и
-операций Secret Service тесты не делают.
-
-Manifest validate и qmllint завершились с кодом 0. У qmllint остались известные
-ограничения типов установленного API: `Style.font` объявлен как `QtObject` и
-`QProcess::ExitStatus` не описан в qmltypes. API полей проверен по исходникам.
-UI проверен во временном offscreen Quickshell harness с синтетическими
-профилями, отдельными HOME/XDG-каталогами и поддельным помощником. Отрисованы
-реальные элементы `Widget.qml` и установленного `qs.Ui`; только оболочка
-`KeyboardPanel`, недоступная в offscreen, заменена тестовым окном Qt Quick.
-Проверены клики, клавиатурная навигация, прокрутка к полю, закреплённые кнопки,
-черновик при закрытии/открытии, подтверждение отмены, время жизни сообщений,
-сохранение через JSON-ответ помощника, ограничения удаления групп и выбор
-аутентификации клавиатурой.
-Экран глобальных настроек отдельно проверен с настоящим helper в изолированных
-HOME/XDG-каталогах: недоступный терминал, выбор клавиатурой, сохранение,
-повторное открытие и отмена несохранённого выбора. Для всех четырёх терминалов
-SSH/AI-запуск выполнен через поддельные исполняемые файлы без подключения к сети.
-Для десяти AI CLI проверены перенос чипсов, переключение мышью и клавиатурой,
-черновик при повторном открытии, сохранение настоящим helper и восстановление
-выбора в редакторе, наличие действий в карточке. Все команды выполнены через
-поддельные SSH и CLI в изоляции, с проверкой аргументов и рабочей папки.
-Выбор всех десяти CLI также прошёл экспорт / предпросмотр импорта.
-Эта проверка не охватывает привязку live-панели к бару, compositor opacity,
-переключение реальных мониторов или подключения к реальным клиентам.
-
-Проверки используют только синтетические профили, временные каталоги и поддельные
-процессы. Они не подключаются к реальным хостам, не читают пользовательские ключи,
-Secret Service или `known_hosts` и не изменяют установленную копию плагина.
-
-## Лицензия
+## License
 
 [MIT](LICENSE) © 2026 vornashev.

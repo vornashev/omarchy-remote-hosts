@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "id": "tema.remote-devices",
-  "name": "Удалённые хосты",
-  "version": "0.6.0",
+  "id": "tema.remote-hosts",
+  "name": "Remote Hosts",
+  "version": "0.7.0",
   "author": "vornashev",
-  "description": "Каталог удалённых хостов с SSH, SFTP, VS Code и AI CLI",
+  "description": "Remote host catalog with SSH, SFTP, VS Code, and AI CLI launchers",
   "kinds": ["bar-widget"],
   "entryPoints": {"barWidget": "BarWidget.qml"},
   "barWidget": {
-    "displayName": "Удалённые хосты",
+    "displayName": "Remote Hosts",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right"
