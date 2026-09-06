@@ -3,7 +3,7 @@ import qs.Ui
 
 BarWidget {
     id: root
-    moduleName: "tema.remote-hosts"
+    moduleName: "vornashev.remote-hosts"
 
     readonly property var panelItem: panelLoader.item
     readonly property bool opened: panelItem ? panelItem.opened === true : false

@@ -9,8 +9,8 @@ import "state" as State
 
 Ui.Panel {
     id: root
-    moduleName: "tema.remote-hosts"
-    ipcTarget: "tema.remote-hosts"
+    moduleName: "vornashev.remote-hosts"
+    ipcTarget: "vornashev.remote-hosts"
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
 

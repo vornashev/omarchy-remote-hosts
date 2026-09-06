@@ -6,7 +6,7 @@
 VS Code Remote-SSH, строгую проверку host key и запуск интерактивных AI CLI в
 нативной панели QML/Quickshell.
 
-Идентификатор плагина: `tema.remote-hosts`
+Идентификатор плагина: `vornashev.remote-hosts`
 
 ## Возможности
 
@@ -63,13 +63,13 @@ omarchy plugin validate "$PWD"
 scripts/qml-lint
 scripts/deploy-local
 
-omarchy plugin enable tema.remote-hosts
+omarchy plugin enable vornashev.remote-hosts
 # Необязательно:
-omarchy bar move tema.remote-hosts --section right
+omarchy bar move vornashev.remote-hosts --section right
 ```
 
 `scripts/deploy-local` валидирует исходники, копирует их в
-`~/.config/omarchy/plugins/tema.remote-hosts`, устанавливает executable bit для
+`~/.config/omarchy/plugins/vornashev.remote-hosts`, устанавливает executable bit для
 askpass и обновляет реестр плагинов. Скрипт не устанавливает пакеты и не меняет
 `~/.ssh/config`.
 
@@ -90,17 +90,18 @@ askpass и обновляет реестр плагинов. Скрипт не �
 Профили и глобальные настройки находятся в:
 
 ```text
-$XDG_DATA_HOME/tema.remote-hosts/
+$XDG_DATA_HOME/vornashev.remote-hosts/
 ```
 
-Путь по умолчанию — `~/.local/share/tema.remote-hosts/`. Каталог имеет права
+Путь по умолчанию — `~/.local/share/vornashev.remote-hosts/`. Каталог имеет права
 0700, файлы данных и lock — 0600. Запись использует временный файл в том же
 каталоге, `fsync` и атомарную замену.
 
 При первом запуске версия 0.7 безопасно перемещает приватный каталог данных из
-предыдущего namespace, если новый каталог ещё не существует. Небезопасные права
-и symlink приводят к отказу. Пароль переносится из прежнего атрибута application
-Secret Service при первом чтении, после чего старая запись удаляется.
+любого предыдущего namespace, если новый каталог ещё не существует. Небезопасные
+права и symlink приводят к отказу. Пароль переносится из прежних атрибутов
+application Secret Service при первом чтении, после чего найденная старая запись
+удаляется.
 
 Схема профилей остаётся версией 1:
 

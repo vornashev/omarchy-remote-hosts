@@ -200,24 +200,28 @@ class PersistenceTests(Isolated):
         with self.assertRaises(h.Error), self.store.locked():
             pass
 
-    def test_default_store_atomically_migrates_legacy_namespace(self):
-        legacy = self.root / h.LEGACY_APP
-        old = h.Store(legacy)
-        with old.locked():
-            old.save(self.data)
-            h.atomic_write(old.settings_path, {"version": 1, "defaultTerminal": "kitty"})
-        with patch.dict(os.environ, {"XDG_DATA_HOME": str(self.root)}):
-            migrated = h.Store()
-            with migrated.locked():
-                self.assertEqual(migrated.load(), self.data)
-                self.assertEqual(migrated.load_settings(),
-                                 {"version": 1, "defaultTerminal": "kitty", "language": "en"})
-        self.assertEqual(migrated.root, self.root / h.APP)
-        self.assertFalse(legacy.exists())
-        self.assertEqual(stat.S_IMODE(migrated.root.stat().st_mode), 0o700)
+    def test_default_store_atomically_migrates_legacy_namespaces(self):
+        for index, legacy_app in enumerate(h.LEGACY_APPS):
+            with self.subTest(legacy_app=legacy_app):
+                base = self.root / f"legacy-{index}"
+                base.mkdir()
+                legacy = base / legacy_app
+                old = h.Store(legacy)
+                with old.locked():
+                    old.save(self.data)
+                    h.atomic_write(old.settings_path, {"version": 1, "defaultTerminal": "kitty"})
+                with patch.dict(os.environ, {"XDG_DATA_HOME": str(base)}):
+                    migrated = h.Store()
+                    with migrated.locked():
+                        self.assertEqual(migrated.load(), self.data)
+                        self.assertEqual(migrated.load_settings(),
+                                         {"version": 1, "defaultTerminal": "kitty", "language": "en"})
+                self.assertEqual(migrated.root, base / h.APP)
+                self.assertFalse(legacy.exists())
+                self.assertEqual(stat.S_IMODE(migrated.root.stat().st_mode), 0o700)
 
     def test_unsafe_legacy_namespace_is_not_migrated(self):
-        legacy = self.root / h.LEGACY_APP
+        legacy = self.root / h.LEGACY_APPS[0]
         legacy.mkdir(mode=0o755)
         with patch.dict(os.environ, {"XDG_DATA_HOME": str(self.root)}):
             target = h.Store()
@@ -364,23 +368,29 @@ class SecretTests(Isolated):
                     h.secret("store", profile(), sentinel)
                 self.assertNotIn(sentinel, str(raised.exception))
 
-    def test_legacy_secret_is_migrated_on_first_lookup(self):
+    def test_legacy_secrets_are_migrated_on_first_lookup(self):
         old_password = "legacy-secret"
-        responses = [
-            Mock(returncode=1, stdout="", stderr=""),
-            Mock(returncode=0, stdout=old_password + "\n", stderr=""),
-            Mock(returncode=0, stdout="", stderr=""),
-            Mock(returncode=0, stdout="", stderr=""),
-        ]
-        with patch.object(h.shutil, "which", return_value="secret-tool"), \
-             patch.object(h.subprocess, "run", side_effect=responses) as run:
-            self.assertEqual(h.secret("lookup", profile()), old_password)
-        calls = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(calls[0], ["secret-tool", "lookup", *h.secret_args(profile())])
-        self.assertEqual(calls[1], ["secret-tool", "lookup", *h.secret_args(profile(), h.LEGACY_APP)])
-        self.assertEqual(calls[2][:3], ["secret-tool", "store", "--label=Omarchy remote host"])
-        self.assertEqual(calls[3], ["secret-tool", "clear", *h.secret_args(profile(), h.LEGACY_APP)])
-        self.assertEqual(run.call_args_list[2].kwargs["input"], old_password)
+        for legacy_index, legacy_app in enumerate(h.LEGACY_APPS):
+            with self.subTest(legacy_app=legacy_app):
+                responses = [
+                    *[Mock(returncode=1, stdout="", stderr="") for _ in range(legacy_index + 1)],
+                    Mock(returncode=0, stdout=old_password + "\n", stderr=""),
+                    Mock(returncode=0, stdout="", stderr=""),
+                    Mock(returncode=0, stdout="", stderr=""),
+                ]
+                with patch.object(h.shutil, "which", return_value="secret-tool"), \
+                     patch.object(h.subprocess, "run", side_effect=responses) as run:
+                    self.assertEqual(h.secret("lookup", profile()), old_password)
+                calls = [call.args[0] for call in run.call_args_list]
+                self.assertEqual(calls[0], ["secret-tool", "lookup", *h.secret_args(profile())])
+                found_index = legacy_index + 1
+                self.assertEqual(calls[found_index],
+                                 ["secret-tool", "lookup", *h.secret_args(profile(), legacy_app)])
+                self.assertEqual(calls[found_index + 1][:3],
+                                 ["secret-tool", "store", "--label=Omarchy remote host"])
+                self.assertEqual(calls[found_index + 2],
+                                 ["secret-tool", "clear", *h.secret_args(profile(), legacy_app)])
+                self.assertEqual(run.call_args_list[found_index + 1].kwargs["input"], old_password)
 
     def test_password_never_persisted_returned_and_failure_no_profile(self):
         original = self.store.path.read_bytes()
@@ -972,7 +982,7 @@ class HostKeyTests(Isolated):
         self.assertEqual(known.read_text(), f"[192.0.2.10]:2222 ssh-ed25519 {key}\n")
         self.assertEqual(stat.S_IMODE((home / ".ssh").stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(known.stat().st_mode), 0o600)
-        self.assertEqual(stat.S_IMODE((home / ".ssh/.tema.remote-hosts-known-hosts.lock").stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE((home / ".ssh/.vornashev.remote-hosts-known-hosts.lock").stat().st_mode), 0o600)
         keyscan_run.assert_called_once()
 
     def test_existing_safe_permissions_are_preserved_not_chmodded(self):

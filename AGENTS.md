@@ -1,6 +1,6 @@
 # Project instructions
 
-This repository is the source of truth for the `tema.remote-hosts` Omarchy
+This repository is the source of truth for the `vornashev.remote-hosts` Omarchy
 plugin, published as `omarchy-remote-hosts`. Follow these instructions as
 repository constraints, then carry the user's requested work to completion.
 
@@ -42,7 +42,7 @@ repository constraints, then carry the user's requested work to completion.
 
 - Never edit `/usr/share/omarchy/`.
 - The live installed copy is
-  `~/.config/omarchy/plugins/tema.remote-hosts`. Develop and test in this
+  `~/.config/omarchy/plugins/vornashev.remote-hosts`. Develop and test in this
   repository first. Deploy only when explicitly requested, using
   `scripts/deploy-local`.
 - Never copy profiles, passwords, private keys, `known_hosts`, screenshots with

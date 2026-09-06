@@ -6,7 +6,7 @@ An Omarchy bar plugin for managing remote development hosts. It combines SSH,
 SFTP, VS Code Remote-SSH, strict host-key verification, and interactive AI CLI
 launchers in one native QML/Quickshell panel.
 
-Plugin ID: `tema.remote-hosts`
+Plugin ID: `vornashev.remote-hosts`
 
 ## Features
 
@@ -63,13 +63,13 @@ omarchy plugin validate "$PWD"
 scripts/qml-lint
 scripts/deploy-local
 
-omarchy plugin enable tema.remote-hosts
+omarchy plugin enable vornashev.remote-hosts
 # Optional:
-omarchy bar move tema.remote-hosts --section right
+omarchy bar move vornashev.remote-hosts --section right
 ```
 
 `scripts/deploy-local` validates the source, copies it to
-`~/.config/omarchy/plugins/tema.remote-hosts`, sets the askpass executable bit,
+`~/.config/omarchy/plugins/vornashev.remote-hosts`, sets the askpass executable bit,
 and rescans shell plugins. It does not install packages or edit
 `~/.ssh/config`.
 
@@ -90,18 +90,18 @@ excluded from profile import/export.
 Profiles and global settings are stored under:
 
 ```text
-$XDG_DATA_HOME/tema.remote-hosts/
+$XDG_DATA_HOME/vornashev.remote-hosts/
 ```
 
-The default is `~/.local/share/tema.remote-hosts/`. The directory uses mode
+The default is `~/.local/share/vornashev.remote-hosts/`. The directory uses mode
 0700; data files and the lock use 0600. Writes use a same-directory temporary
 file, `fsync`, and atomic replacement.
 
 On first start, version 0.7 safely moves a valid private data directory from
-the previous plugin namespace when the new directory does not exist. Unsafe
-permissions and symlinks fail closed. Password entries are migrated from the
-previous Secret Service application attribute on first lookup, then the old
-entry is cleared.
+either previous plugin namespace when the new directory does not exist. Unsafe
+permissions and symlinks fail closed. Password entries are migrated from
+previous Secret Service application attributes on first lookup, then the
+matching old entry is cleared.
 
 Profile schema remains version 1:
 

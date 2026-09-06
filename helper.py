@@ -26,8 +26,8 @@ import time
 import uuid
 from typing import Any
 
-APP = "tema.remote-hosts"
-LEGACY_APP = "tema.remote-devices"
+APP = "vornashev.remote-hosts"
+LEGACY_APPS = ("tema.remote-hosts", "tema.remote-devices")
 HERE = Path(__file__).resolve().parent
 MAX_BYTES = 1024 * 1024
 MAX_DEVICES = 100
@@ -443,20 +443,22 @@ class Store:
         base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
         require(Path(base).is_absolute(), "XDG_DATA_HOME должен быть абсолютным")
         self.root = Path(root) if root is not None else Path(base) / APP
-        self.legacy_root = None if root is not None else Path(base) / LEGACY_APP
+        self.legacy_roots = () if root is not None else tuple(Path(base) / app for app in LEGACY_APPS)
         self.path = self.root / "profiles.json"
         self.settings_path = self.root / "settings.json"
 
     def migrate_legacy(self):
-        if self.legacy_root is None or self.root.exists() or self.root.is_symlink():
+        if self.root.exists() or self.root.is_symlink():
             return
-        if not self.legacy_root.exists() and not self.legacy_root.is_symlink():
+        legacy_root = next((path for path in self.legacy_roots
+                            if path.exists() or path.is_symlink()), None)
+        if legacy_root is None:
             return
-        legacy = self.legacy_root.lstat()
+        legacy = legacy_root.lstat()
         require(stat.S_ISDIR(legacy.st_mode) and legacy.st_uid == os.getuid()
                 and not legacy.st_mode & 0o077,
                 "Каталог старых данных должен принадлежать вам и иметь права 0700 (не symlink)")
-        os.rename(self.legacy_root, self.root)
+        os.rename(legacy_root, self.root)
         directory = os.open(self.root.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory)
@@ -526,23 +528,28 @@ def secret(operation, d, password=None):
         require(result.returncode == 0, "Secret Service: операция не выполнена; разблокируйте хранилище")
         return None
     if operation == "clear":
-        current = secret_run("clear", d)
-        legacy = secret_run("clear", d, app=LEGACY_APP)
-        require(0 in (current.returncode, legacy.returncode),
-                "Secret Service: операция не выполнена; разблокируйте хранилище")
+        succeeded = secret_run("clear", d).returncode == 0
+        for legacy_app in LEGACY_APPS:
+            succeeded = secret_run("clear", d, app=legacy_app).returncode == 0 or succeeded
+        require(succeeded, "Secret Service: операция не выполнена; разблокируйте хранилище")
         return None
     result = secret_run("lookup", d)
     if result.returncode == 1:
-        legacy = secret_run("lookup", d, app=LEGACY_APP)
-        if legacy.returncode == 0:
-            password = legacy.stdout.removesuffix("\n")
-            text(password, "Сохранённый пароль", 4096)
-            stored = secret_run("store", d, password)
-            require(stored.returncode == 0, "Secret Service: не удалось перенести сохранённый пароль")
-            cleared = secret_run("clear", d, app=LEGACY_APP)
-            require(cleared.returncode in (0, 1), "Secret Service: не удалось завершить перенос пароля")
-            return password
-        result = legacy
+        for legacy_app in LEGACY_APPS:
+            legacy = secret_run("lookup", d, app=legacy_app)
+            if legacy.returncode == 1:
+                result = legacy
+                continue
+            result = legacy
+            if legacy.returncode == 0:
+                password = legacy.stdout.removesuffix("\n")
+                text(password, "Сохранённый пароль", 4096)
+                stored = secret_run("store", d, password)
+                require(stored.returncode == 0, "Secret Service: не удалось перенести сохранённый пароль")
+                cleared = secret_run("clear", d, app=legacy_app)
+                require(cleared.returncode in (0, 1), "Secret Service: не удалось завершить перенос пароля")
+                return password
+            break
     require(result.returncode == 0, "Secret Service: операция не выполнена; разблокируйте хранилище")
     password = result.stdout.removesuffix("\n")
     text(password, "Сохранённый пароль", 4096)
@@ -935,7 +942,7 @@ def trust_host_keys(d, preview_keys, token, home=None):
 
     home = user_home() if home is None else Path(home)
     ssh_dir = ensure_ssh_directory(home)
-    lock_path = ssh_dir / ".tema.remote-hosts-known-hosts.lock"
+    lock_path = ssh_dir / ".vornashev.remote-hosts-known-hosts.lock"
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         check_open_file(lock_fd, lock_path, private=True)
