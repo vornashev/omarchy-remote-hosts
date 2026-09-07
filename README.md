@@ -47,7 +47,7 @@ auto-approval flags.
 - Optional: `secret-tool` and an unlocked Secret Service for passwords.
 - Optional: `sshfs`, FUSE 3, and Nautilus for SFTP.
 - Optional: VS Code with the official `ms-vscode-remote.remote-ssh` extension.
-- Optional: `wl-copy` for copying host addresses.
+- Optional: `wl-copy` for copying `login@host:port` SSH endpoints from host cards.
 
 Remote AI CLIs must already be installed, authenticated, and available in the
 remote user's login-shell `PATH`. The plugin does not install remote software.
@@ -84,6 +84,20 @@ The saved terminal applies to new SSH and AI CLI windows on every host. Missing
 terminals cannot be selected, and there is no silent fallback. VS Code and SFTP
 remain separate actions. Language and terminal settings are machine-local and
 excluded from profile import/export.
+
+## Screen-sharing privacy
+
+Use the eye button in the panel header to blur logins and addresses on host
+cards, in the editor, in import previews, in host-key review, and in dynamic
+error messages. A successful copy notification remains readable. Endpoint
+fields cannot be edited while hidden, and a host key cannot be trusted until
+addresses are shown again.
+
+This is a transient visual mode for screen sharing, not cryptographic
+redaction. It does not change saved profiles or the real endpoint copied from a
+host card, and it does not cover the clipboard, external terminals, or text in
+arbitrary names and notes. The mode is shared by panel instances until the
+shell process restarts; it is not saved to disk.
 
 ## Stored data and upgrades
 

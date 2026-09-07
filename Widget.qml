@@ -1,5 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Effects
+import Quickshell
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import Quickshell.Io
@@ -23,6 +25,7 @@ Ui.Panel {
     readonly property string language: page === "settings" && settingsLoaded
                                        ? languageChoice.value : (globalConfig.language || "en")
     readonly property bool terminalAvailable: terminals.some(function(t) { return t.value === terminalChoice.value && t.available })
+    readonly property bool addressesHidden: State.PrivacyState.addressesHidden
     readonly property var agentLabels: ({
         pi: "Pi", codex: "Codex", claude: "Claude", opencode: "OpenCode",
         gemini: "Gemini CLI", aider: "Aider", goose: "Goose", amp: "Amp",
@@ -80,6 +83,14 @@ Ui.Panel {
         if (error) messageTimer.stop()
         else if (message !== "") messageTimer.restart()
     }
+    onAddressesHiddenChanged: {
+        if (!addressesHidden) return
+        var endpointFocused = hostField.activeFocus || loginField.activeFocus || portField.activeFocus
+        hostField.deselect()
+        loginField.deselect()
+        portField.deselect()
+        if (endpointFocused) pageFrame.forceActiveFocus()
+    }
     function ensureVisible(item) {
         if (!item || !item.visible || !item.activeFocus) return
         var ancestor = item.parent
@@ -112,6 +123,13 @@ Ui.Panel {
         request.payload = JSON.stringify(payload)
         request.running = true
         requestGuard.restart()
+    }
+    function copyEndpoint(d) {
+        if (!d) return
+        var endpoint = d.login + "@" + d.host + ":" + d.port
+        Quickshell.execDetached(["wl-copy", endpoint])
+        error = false
+        message = root.t("SSH endpoint copied")
     }
     function refresh() {
         if (!loaded || checker.running) return
@@ -204,6 +222,7 @@ Ui.Panel {
         showList()
     }
     function focusItem(key) {
+        if (addressesHidden && (key === "host" || key === "login" || key === "port")) return pageFrame
         if (key === "host") return hostField
         if (key === "port") return portField
         if (key === "login") return loginField
@@ -228,6 +247,10 @@ Ui.Panel {
         var target = focusItem(State.DraftState.focusKey)
         if (!target || !target.visible) target = nameField
         Qt.callLater(function() {
+            if (root.addressesHidden && (target === hostField || target === loginField || target === portField)) {
+                pageFrame.forceActiveFocus()
+                return
+            }
             if (root.opened && root.page === "device" && target && target.visible) {
                 target.forceActiveFocus()
                 root.ensureVisible(target)
@@ -623,6 +646,15 @@ Ui.Panel {
                                 : root.page === "hostkey" ? root.t("Verify host key") : root.t("Host tools")
                         }
                         Ui.PanelActionButton {
+                            iconText: root.addressesHidden ? "󰈉" : "󰈈"
+                            foreground: root.addressesHidden ? Color.accent : Color.foreground
+                            fontSize: Style.space(20)
+                            size: Style.space(34)
+                            focusable: true
+                            tooltipText: root.t(root.addressesHidden ? "Show logins and addresses" : "Hide logins and addresses")
+                            onClicked: State.PrivacyState.addressesHidden = !State.PrivacyState.addressesHidden
+                        }
+                        Ui.PanelActionButton {
                             visible: root.page === "list"
                             iconText: "󰒓"
                             fontSize: Style.space(20)
@@ -659,7 +691,13 @@ Ui.Panel {
                 RowLayout {
                     visible: root.message !== ""
                     Layout.fillWidth: true
-                    Label { text: root.message; color: root.error ? Color.urgent : root.secondaryText; font.pixelSize: Style.font.caption }
+                    Label {
+                        text: root.message
+                        color: root.error ? Color.urgent : root.secondaryText
+                        font.pixelSize: Style.font.caption
+                        layer.enabled: root.addressesHidden && root.error && visible
+                        layer.effect: PrivacyBlur {}
+                    }
                     Ui.PanelActionButton {
                         iconText: "󰅖"
                         size: Style.space(28)
@@ -745,12 +783,11 @@ Ui.Panel {
                                                 }
                                                 RowLayout {
                                                     Layout.fillWidth: true
-                                                    Caption {
-                                                        text: deviceCard.modelData.login + "@" + deviceCard.modelData.host + ":" + deviceCard.modelData.port
-                                                        wrapMode: Text.NoWrap
-                                                        elide: Text.ElideMiddle
-                                                        Layout.minimumWidth: 0
+                                                    CopyAddress {
+                                                        addressText: deviceCard.modelData.login + "@" + deviceCard.modelData.host + ":" + deviceCard.modelData.port
+                                                        onClicked: root.copyEndpoint(deviceCard.modelData)
                                                     }
+                                                    Item { Layout.fillWidth: true }
                                                     Action { text: "SSH"; iconText: "󰆍"; foreground: Color.accent; tooltipText: root.t("Connect in the selected terminal"); onClicked: root.launchDevice(deviceCard.modelData.id) }
                                                     Ui.PanelActionButton {
                                                         iconText: deviceCard.expanded ? "󰅃" : "󰅀"
@@ -821,7 +858,7 @@ Ui.Panel {
                             Label { text: toolsPage.device ? toolsPage.device.name : ""; font.bold: true }
                             Caption { text: toolsPage.device ? root.statusDetails(toolsPage.device) : "" }
                             Caption { visible: text !== ""; text: toolsPage.device ? toolsPage.device.note : "" }
-                            Action { Layout.fillWidth: true; leftAlign: true; iconText: "󰆏"; text: root.t("Copy host address"); onClicked: root.call({op: "copy", id: root.actionId}) }
+                            Action { Layout.fillWidth: true; leftAlign: true; iconText: "󰆏"; text: root.t("Copy SSH endpoint"); onClicked: root.copyEndpoint(toolsPage.device) }
                             Action { Layout.fillWidth: true; leftAlign: true; iconText: "󰌆"; text: root.t("Verify host key"); onClicked: root.inspectHostKey(root.actionId) }
                             Action {
                                 visible: toolsPage.device !== null && root.matchingSftpState(toolsPage.device) === "mounted"
@@ -851,6 +888,9 @@ Ui.Panel {
                                 Caption { text: root.t("Server address") }
                                 Field {
                                     id: hostField
+                                    enabled: !root.addressesHidden
+                                    layer.enabled: root.addressesHidden && visible
+                                    layer.effect: PrivacyBlur {}
                                     placeholderText: root.t("IPv4, unbracketed IPv6, or ASCII domain")
                                     maximumLength: 253
                                     onTextChanged: {
@@ -867,7 +907,16 @@ Ui.Panel {
                                     Layout.fillWidth: true
                                     spacing: Style.space(4)
                                     Caption { text: root.t("User") }
-                                    Field { id: loginField; placeholderText: root.t("SSH login"); maximumLength: 64; onTextChanged: if (State.DraftState.active) State.DraftState.login = text; onActiveFocusChanged: root.rememberDraftFocus("login", loginField) }
+                                    Field {
+                                        id: loginField
+                                        enabled: !root.addressesHidden
+                                        placeholderText: root.t("SSH login")
+                                        maximumLength: 64
+                                        layer.enabled: root.addressesHidden && visible
+                                        layer.effect: PrivacyBlur {}
+                                        onTextChanged: if (State.DraftState.active) State.DraftState.login = text
+                                        onActiveFocusChanged: root.rememberDraftFocus("login", loginField)
+                                    }
                                 }
                                 ColumnLayout {
                                     Layout.preferredWidth: Style.space(88)
@@ -876,6 +925,9 @@ Ui.Panel {
                                     Caption { text: root.t("Port") }
                                     Field {
                                         id: portField
+                                        enabled: !root.addressesHidden
+                                        layer.enabled: root.addressesHidden && visible
+                                        layer.effect: PrivacyBlur {}
                                         placeholderText: "22"
                                         maximumLength: 5
                                         onTextChanged: {
@@ -885,6 +937,10 @@ Ui.Panel {
                                         onActiveFocusChanged: root.rememberDraftFocus("port", portField)
                                     }
                                 }
+                            }
+                            Caption {
+                                visible: root.addressesHidden
+                                text: root.t("Turn off address hiding to edit these fields.")
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
@@ -1030,23 +1086,35 @@ Ui.Panel {
                             Layout.fillWidth: true
                             spacing: Style.space(12)
                             enabled: !root.busy
-                            Caption { text: "known_hosts: " + root.hostKeyEndpoint }
+                            Caption {
+                                text: "known_hosts: " + root.hostKeyEndpoint
+                                layer.enabled: root.addressesHidden && visible
+                                layer.effect: PrivacyBlur {}
+                            }
                             Label { text: root.hostKeyRows }
                             Label {
                                 text: root.t("IMPORTANT: ssh-keyscan does not prove server identity. Verify EVERY SHA256 fingerprint with the administrator or server console over an independent trusted channel. Do not trust a key merely because it appears here.")
                                 color: Color.urgent
                             }
-                            Label { text: root.hostKeyMessage }
+                            Label {
+                                text: root.hostKeyMessage
+                                layer.enabled: root.addressesHidden && visible
+                                layer.effect: PrivacyBlur {}
+                            }
                             Flow {
                                 Layout.fillWidth: true
                                 spacing: Style.space(8)
                                 Action {
                                     id: trustHostKeyButton
                                     text: root.t("Trust after verification")
-                                    enabled: root.hostKeyState === "new" && root.hostKeyToken !== ""
+                                    enabled: root.hostKeyState === "new" && root.hostKeyToken !== "" && !root.addressesHidden
                                     onClicked: root.call({op: "trustHostKey", id: root.hostKeyDeviceId, keys: root.hostKeyKeys, token: root.hostKeyToken})
                                 }
                                 Action { id: cancelHostKeyButton; text: root.t("Cancel"); onClicked: root.showList() }
+                            }
+                            Caption {
+                                visible: root.addressesHidden
+                                text: root.t("Show addresses before trusting a host key.")
                             }
                             Caption { visible: root.hostKeyState !== "new"; text: root.t("The plugin does not replace or remove existing known_hosts entries. Resolve key changes separately with a trusted administrator.") }
                         }
@@ -1122,7 +1190,16 @@ Ui.Panel {
                                 }
                             }
                             Action { text: root.t("Preview import"); onClicked: { root.importToken = ""; root.call({op: "previewImport", path: transferPath.text, policy: duplicateChoice.value}) } }
-                            Label { visible: root.importToken !== ""; text: root.importSummary + "\n" + root.t("Final list:\n") + root.previewRows }
+                            Label {
+                                visible: root.importToken !== ""
+                                text: root.importSummary + "\n" + root.t("Final list:\n")
+                            }
+                            Label {
+                                visible: root.importToken !== ""
+                                text: root.previewRows
+                                layer.enabled: root.addressesHidden && visible
+                                layer.effect: PrivacyBlur {}
+                            }
                             Caption { text: root.t("Passwords and key contents are not transferred. New hosts use a key / SSH agent. Verify addresses and paths in the preview.") }
                             Action { text: root.t("Apply import"); enabled: root.importToken !== ""; onClicked: root.call({op: "import", path: transferPath.text, policy: duplicateChoice.value, token: root.importToken}) }
                         }
@@ -1217,6 +1294,12 @@ Ui.Panel {
             }
         }
     }
+    component PrivacyBlur: MultiEffect {
+        blurEnabled: true
+        blur: 1.0
+        blurMax: 32
+        autoPaddingEnabled: true
+    }
     component Label: Text {
         Layout.fillWidth: true
         textFormat: Text.PlainText
@@ -1228,6 +1311,54 @@ Ui.Panel {
     component Caption: Label {
         color: root.secondaryText
         font.pixelSize: Style.font.caption
+    }
+    component CopyAddress: Ui.Button {
+        id: copyAddress
+        property string addressText: ""
+        text: ""
+        fontSize: Style.font.caption
+        leftAlign: true
+        bordered: false
+        rightPadding: Style.space(28)
+        implicitWidth: addressMetrics.advanceWidth + horizontalPadding * 2 + Style.space(28)
+        implicitHeight: addressLabel.implicitHeight + verticalPadding * 2 + _reservedBorderTop + _reservedBorderBottom
+        Layout.fillWidth: false
+        Layout.minimumWidth: 0
+        tooltipText: root.t("Copy SSH endpoint")
+        foreground: root.secondaryText
+
+        Text {
+            id: addressLabel
+            anchors.left: parent.left
+            anchors.leftMargin: copyAddress._reservedContentLeftInset
+            anchors.right: parent.right
+            anchors.rightMargin: copyAddress._reservedBorderRight + copyAddress.rightPadding
+            anchors.verticalCenter: parent.verticalCenter
+            text: copyAddress.addressText
+            textFormat: Text.PlainText
+            elide: Text.ElideMiddle
+            font.family: copyAddress.fontFamily
+            font.pixelSize: copyAddress.fontSize
+            color: copyAddress.foreground
+            layer.enabled: root.addressesHidden && visible
+            layer.effect: PrivacyBlur {}
+        }
+        Text {
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            text: "󰆏"
+            visible: copyAddress.hot
+            color: Color.accent
+            font.family: Style.font.family
+            font.pixelSize: Style.space(14)
+        }
+        TextMetrics {
+            id: addressMetrics
+            text: copyAddress.addressText
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+        }
     }
     component Field: Ui.TextField {
         Layout.fillWidth: true

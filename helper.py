@@ -201,7 +201,7 @@ ENGLISH_MESSAGES = {
     "Запуск AI принимает только id и выбранного агента": "AI launch accepts only the host ID and selected agent",
     "wl-copy не найден": "wl-copy was not found",
     "Буфер обмена недоступен": "Clipboard is unavailable",
-    "Адрес скопирован (не пароль)": "Address copied (not a password)",
+    "SSH-адрес скопирован (не пароль)": "SSH endpoint copied (not a password)",
     "Проверка устройства принимает только его id": "Host check accepts only its ID",
     "Неизвестная операция": "Unknown operation",
     "Неизвестные аргументы терминала": "Unknown terminal arguments",
@@ -1514,9 +1514,10 @@ def dispatch(req, store=None) -> dict[str, Any]:
         if op == "copy":
             d = find_device(data, req.get("id"))
             require(shutil.which("wl-copy") is not None, "wl-copy не найден")
-            p = subprocess.run(["wl-copy"], input=d["host"], text=True, capture_output=True, timeout=3)
+            endpoint = f"{d['login']}@{d['host']}:{d['port']}"
+            p = subprocess.run(["wl-copy"], input=endpoint, text=True, capture_output=True, timeout=3)
             require(p.returncode == 0, "Буфер обмена недоступен")
-            return {"message": "Адрес скопирован (не пароль)"}
+            return {"message": "SSH-адрес скопирован (не пароль)"}
         if op == "checkDevice":
             require(set(req) == {"op", "id"}, "Проверка устройства принимает только его id")
             devices = [find_device(data, req.get("id"))]

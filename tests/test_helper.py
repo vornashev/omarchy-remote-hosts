@@ -902,11 +902,11 @@ class ClientTests(Isolated):
         self.assertEqual(env["TERM"], "xterm-256color")
         self.assertIn("StrictHostKeyChecking=yes", args)
 
-    def test_copy_uses_stdin(self):
+    def test_copy_endpoint_uses_stdin(self):
         with patch.object(h.shutil, "which", return_value="wl-copy"), patch.object(h.subprocess, "run", return_value=Mock(returncode=0)) as run:
             self.call(op="copy", id=ID)
         self.assertEqual(run.call_args.args[0], ["wl-copy"])
-        self.assertEqual(run.call_args.kwargs["input"], "example.test")
+        self.assertEqual(run.call_args.kwargs["input"], "tema@example.test:2222")
 
 
 class HostKeyTests(Isolated):
