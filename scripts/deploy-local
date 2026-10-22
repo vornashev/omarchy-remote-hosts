@@ -12,7 +12,8 @@ command -v rsync >/dev/null || { echo "rsync is required; packages are not insta
 omarchy plugin validate "$root"
 mkdir -p "$target"
 rsync -a --delete \
-  --exclude='.git/' --exclude='.gitignore' --exclude='AGENTS.md' --exclude='scripts/' \
+  --exclude='.git/' --exclude='.gitignore' --exclude='.pi/' --exclude='AGENTS.md' --exclude='scripts/' \
+  --exclude='untitled.pen' --exclude='DESIGN-REVIEW.md' \
   "$root/" "$target/"
 chmod 700 "$target/askpass.py"
 omarchy-shell shell rescanPlugins

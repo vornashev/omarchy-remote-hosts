@@ -43,13 +43,14 @@ repository constraints, then carry the user's requested work to completion.
 - Never edit `/usr/share/omarchy/`.
 - The live installed copy is
   `~/.config/omarchy/plugins/vornashev.remote-hosts`. Develop and test in this
-  repository first. Deploy only when explicitly requested, using
-  `scripts/deploy-local`.
+  repository first. Deploy it with `scripts/deploy-local` as described in
+  **Local deploy** below.
 - Never copy profiles, passwords, private keys, `known_hosts`, screenshots with
   real endpoints, or runtime data into this repository.
 - Do not connect to real hosts, read real Secret Service entries, install
-  packages or extensions, publish, push, enable/disable the plugin, restart the
-  shell, or change `~/.ssh/config` without explicit user approval.
+  packages or extensions, publish, push, enable/disable the plugin, or change
+  `~/.ssh/config` without explicit user approval. Restarting the shell is
+  pre-approved only as the final step of **Local deploy**.
 - Keep passwords out of argv, environment variables, logs, JSON responses,
   clipboard, files, exception text, and tracebacks. Password flow remains stdin
   or pipe based.
@@ -80,7 +81,7 @@ repository constraints, then carry the user's requested work to completion.
 - Add or change tests only for observable behavior, boundaries, invariants, or
   regressions. Do not test source text, field forwarding, or other
   implementation details.
-- Do not edit generated/runtime files or deploy as part of ordinary validation.
+- Do not edit generated/runtime files.
 
 ## Verification
 
@@ -97,3 +98,20 @@ For documentation-only or other low-impact changes, verify the changed artifact
 directly; do not run broad tests unless the change affects executable commands
 or unresolved risk justifies them. Do not repeat passing checks without a new
 change or failure.
+
+## Local deploy
+
+The user develops and hands-tests the plugin locally, so the installed copy must
+always match the latest working tree. After any task that changes behavior or
+visuals (QML, `helper.py`, `askpass.py`, `manifest.json`, translations), once
+the verification checks pass:
+
+```bash
+scripts/deploy-local
+omarchy-restart-shell
+```
+
+Then confirm the shell answers `omarchy-shell shell ping` and the user journal
+(`journalctl --user --since "-1 min"`) shows no QML errors from the plugin.
+Skip the deploy for documentation-only or test-only changes, and never deploy
+a tree whose checks fail. Report the deploy and restart in the final response.

@@ -11,4 +11,4 @@ mkdir "$tmp/qs"
 ln -s /usr/share/omarchy/shell/Ui "$tmp/qs/Ui"
 ln -s /usr/share/omarchy/shell/Commons "$tmp/qs/Commons"
 "$qmllint" -I "$tmp" -I /usr/lib/qt6/qml \
-  "$root/BarWidget.qml" "$root/Widget.qml" "$root/state/DraftState.qml"
+  "$root/BarWidget.qml" "$root/Widget.qml" "$root/RemoteHostsIcon.qml" "$root/state/DraftState.qml"

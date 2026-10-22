@@ -15,14 +15,15 @@ QtObject {
     property string note: ""
     property string auth: "agent"
     property string keyPath: ""
+    property bool saveKeyPassphrase: false
     property string client: "ghostty"
     property var agents: []
     property string agentFolder: ""
     property string remoteFolder: ""
     property string password: ""
+    property string passphrase: ""
+    property bool pinned: false
     property string focusKey: "name"
-    property bool aiExpanded: false
-    property bool advancedExpanded: false
 
     function clear() {
         active = false
@@ -35,13 +36,14 @@ QtObject {
         note = ""
         auth = "agent"
         keyPath = ""
+        saveKeyPassphrase = false
         client = "ghostty"
         agents = []
         agentFolder = ""
         remoteFolder = ""
         password = ""
+        passphrase = ""
+        pinned = false
         focusKey = "name"
-        aiExpanded = false
-        advancedExpanded = false
     }
 }

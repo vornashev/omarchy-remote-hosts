@@ -45,8 +45,9 @@ def public_key(algorithm="ssh-ed25519", material=b"synthetic-public-key"):
 def profile(**changes):
     return {"id": ID, "name": "Сервер", "host": "example.test", "port": 2222,
             "login": "tema", "group": h.DEFAULT_GROUP, "note": "private note",
-            "auth": "agent", "keyPath": "", "client": "ghostty", "remoteFolder": "",
-            "launchMode": "shell", "customExecutable": "", "agents": [], "agentFolder": "", **changes}
+            "auth": "agent", "keyPath": "", "saveKeyPassphrase": False,
+            "client": "ghostty", "remoteFolder": "", "launchMode": "shell",
+            "customExecutable": "", "agents": [], "agentFolder": "", "pinned": False, **changes}
 
 
 class Isolated(unittest.TestCase):
@@ -104,7 +105,7 @@ class ValidationTests(Isolated):
         self.assertEqual(h.safe_path("/home/tema/My Key", "path"), "/home/tema/My Key")
 
     def test_unknown_fields_secret_material_and_duplicate_json_rejected(self):
-        for field in ["password", "privateKey", "secretId", "proxyCommand"]:
+        for field in ["password", "passphrase", "privateKey", "secretId", "proxyCommand"]:
             with self.subTest(field=field), self.assertRaises(h.Error):
                 h.device(profile(**{field: "do not accept"}))
         with self.assertRaises(h.Error):
@@ -116,16 +117,28 @@ class ValidationTests(Isolated):
         old = profile()
         old.pop("agents")
         old.pop("agentFolder")
+        old.pop("saveKeyPassphrase")
         old["launchMode"] = "opencode"
         migrated = h.device(old)
         self.assertEqual(migrated["agents"], ["opencode"])
         self.assertEqual(migrated["agentFolder"], "")
+        self.assertFalse(migrated["saveKeyPassphrase"])
         for agents in [["pi", "pi"], ["unknown-agent"], ["goose session"], ["opencode;id"], ["custom"], "pi", [1]]:
             with self.subTest(agents=agents), self.assertRaises(h.Error):
                 h.device(profile(agents=agents))
         for folder in ["relative", "/tmp/$(id)", "/tmp/a;id"]:
             with self.subTest(folder=folder), self.assertRaises(h.Error):
                 h.device(profile(agentFolder=folder))
+
+    def test_key_passphrase_setting_requires_boolean_agent_and_explicit_key(self):
+        self.assertTrue(h.device(profile(keyPath="/tmp/synthetic-key", saveKeyPassphrase=True))["saveKeyPassphrase"])
+        for changes in [
+            {"saveKeyPassphrase": "yes", "keyPath": "/tmp/synthetic-key"},
+            {"saveKeyPassphrase": True},
+            {"saveKeyPassphrase": True, "auth": "password"},
+        ]:
+            with self.subTest(changes=changes), self.assertRaises(h.Error):
+                h.device(profile(**changes))
 
     def test_notes_controls_and_limits(self):
         self.assertEqual(h.device(profile(note="line1\nline2"))["note"], "line1\nline2")
@@ -215,7 +228,8 @@ class PersistenceTests(Isolated):
                     with migrated.locked():
                         self.assertEqual(migrated.load(), self.data)
                         self.assertEqual(migrated.load_settings(),
-                                         {"version": 1, "defaultTerminal": "kitty", "language": "en"})
+                                         {"version": 1, "defaultTerminal": "kitty", "language": "en", "layout": "auto",
+                                          "watchMinutes": 0})
                 self.assertEqual(migrated.root, base / h.APP)
                 self.assertFalse(legacy.exists())
                 self.assertEqual(stat.S_IMODE(migrated.root.stat().st_mode), 0o700)
@@ -286,6 +300,11 @@ class TransferTests(Isolated):
         self.data["devices"] = [profile(keyPath="/home/tema/key")]
         self.assertEqual(h.export_document(self.data)["devices"][0]["keyPath"], "")
         self.assertEqual(h.export_document(self.data, paths=True)["devices"][0]["keyPath"], "/home/tema/key")
+        exported = h.export_document(
+            {"version": 1, "groups": self.data["groups"],
+             "devices": [profile(keyPath="/home/tema/key", saveKeyPassphrase=True)]},
+            paths=True)
+        self.assertFalse(exported["devices"][0]["saveKeyPassphrase"])
 
     def test_export_no_clobber_and_permissions(self):
         dest = self.root / "export.json"
@@ -301,25 +320,84 @@ class TransferTests(Isolated):
         incoming = copy.deepcopy(self.data)
         incoming["devices"][0].update(name="Imported", auth="agent", keyPath="/tmp/not-local",
                                       launchMode="codex", remoteFolder="/home/tema/imported")
-        result, summary = h.import_preview(self.data, json.dumps(incoming), "skip")
+        result, summary, rows = h.import_preview(self.data, json.dumps(incoming), "skip")
         self.assertEqual(summary["skipped"], 1)
         self.assertEqual(result["devices"][0]["name"], "Сервер")
-        result, summary = h.import_preview(self.data, json.dumps(incoming), "replace")
+        result, summary, rows = h.import_preview(self.data, json.dumps(incoming), "replace")
         self.assertEqual(summary["replaced"], 1)
         self.assertEqual(result["devices"][0]["name"], "Imported")
         self.assertEqual(result["devices"][0]["auth"], "password")
         self.assertEqual(result["devices"][0]["keyPath"], "")
         self.assertEqual(result["devices"][0]["launchMode"], "codex")
         self.assertEqual(result["devices"][0]["remoteFolder"], "/home/tema/imported")
+        self.assertFalse(result["devices"][0]["saveKeyPassphrase"])
+        self.assertEqual([(r["action"], r["name"], r["auth"]) for r in rows], [("replaced", "Imported", "password")])
+        self.assertFalse({"keyPath", "remoteFolder", "agentFolder", "note"} & set(rows[0]))
+
+    def test_import_preview_rows_and_totals_cover_every_incoming_host(self):
+        incoming = copy.deepcopy(self.data)
+        incoming["devices"].append(profile(id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name="New", host="new.test"))
+        result, summary, rows = h.import_preview(self.data, json.dumps(incoming), "skip")
+        self.assertEqual([(r["action"], r["name"]) for r in rows], [("skipped", "Сервер"), ("added", "New")])
+        self.assertEqual(rows[1]["group"], self.data["groups"][0]["name"])
+        self.assertEqual((summary["hosts"], summary["groups"]), (2, 1))
+        response = self.call(op="previewImport", path=self._write_import(incoming), policy="skip")
+        self.assertEqual(response["previewRows"], rows)
+        self.assertNotIn("previewDevices", response)
+
+    def test_import_replace_preserves_local_key_passphrase_setting(self):
+        current = {**self.data, "devices": [
+            profile(keyPath="/tmp/synthetic-key", saveKeyPassphrase=True)]}
+        incoming = copy.deepcopy(current)
+        incoming["devices"][0].update(name="Imported", saveKeyPassphrase=False)
+        result, summary, rows = h.import_preview(current, json.dumps(incoming), "replace")
+        self.assertEqual(summary["replaced"], 1)
+        self.assertEqual(result["devices"][0]["name"], "Imported")
+        self.assertEqual(result["devices"][0]["keyPath"], "/tmp/synthetic-key")
+        self.assertTrue(result["devices"][0]["saveKeyPassphrase"])
+
+    def _write_import(self, value):
+        path = self.root / "incoming.json"
+        path.write_text(json.dumps(value), encoding="utf-8")
+        return str(path)
+
+    def test_pins_persist_locally_and_never_travel_through_export_or_import(self):
+        self.call(op="setPinned", id=ID, pinned=True)
+        with self.store.locked():
+            self.assertTrue(self.store.load()["devices"][0]["pinned"])
+        self.assertFalse(h.export_document(self.store.load())["devices"][0]["pinned"])
+        incoming = copy.deepcopy(self.data)
+        incoming["devices"][0].update(name="Imported", pinned=False)
+        result, _, _ = h.import_preview(self.store.load(), json.dumps(incoming), "replace")
+        self.assertTrue(result["devices"][0]["pinned"])
+        for bad in ({"pinned": "yes"}, {"pinned": True, "name": "x"}):
+            with self.subTest(bad=bad), self.assertRaises(h.Error):
+                self.call(op="setPinned", id=ID, **bad)
+        with self.assertRaises(h.Error):
+            h.device(profile(pinned=1))
+
+    def test_export_preview_matches_export_options_and_writes_nothing(self):
+        self.data["devices"] = [profile(keyPath="/tmp/k", remoteFolder="/srv", agentFolder="/srv/ai")]
+        with self.store.locked():
+            self.store.save(self.data)
+        bare = self.call(op="previewExport", notes=False, paths=False)["exportPreview"]
+        self.assertEqual((bare["hosts"], bare["groups"]), (1, 1))
+        self.assertEqual((bare["sample"]["note"], bare["sample"]["keyPath"], bare["sample"]["agentFolder"]), ("", "", ""))
+        full = self.call(op="previewExport", notes=True, paths=True)["exportPreview"]["sample"]
+        self.assertEqual((full["note"], full["keyPath"], full["agentFolder"]), ("private note", "/tmp/k", "/srv/ai"))
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["data"])
+        with self.assertRaises(h.Error):
+            self.call(op="previewExport", notes=True, paths=True, path="/tmp/x.json")
 
     def test_import_new_id_reset_auth_and_group_mapping(self):
         incoming = copy.deepcopy(self.data)
         incoming["devices"][0].update(host="other.test", auth="password")
-        result, summary = h.import_preview(self.data, json.dumps(incoming), "skip")
+        result, summary, rows = h.import_preview(self.data, json.dumps(incoming), "skip")
         self.assertEqual(summary["added"], 1)
         self.assertNotEqual(result["devices"][1]["id"], ID)
         self.assertEqual(result["devices"][1]["auth"], "agent")
         self.assertEqual(len(result["groups"]), 1)
+        self.assertFalse(result["devices"][1]["saveKeyPassphrase"])
 
     def test_preview_no_write_and_stale_confirmation_rejected(self):
         dest = self.root / "input.json"
@@ -356,6 +434,25 @@ class SecretTests(Isolated):
         self.assertEqual(kwargs["input"], sentinel)
         self.assertEqual(args[0][:3], ["secret-tool", "store", "--label=Omarchy remote host"])
         self.assertNotIn("shell", kwargs)
+
+
+    def test_key_passphrase_uses_distinct_namespace_label_and_no_legacy_lookup(self):
+        sentinel = "SYNTHETIC-key-passphrase"
+        d = profile(keyPath="/tmp/synthetic-key", saveKeyPassphrase=True)
+        with patch.object(h.shutil, "which", return_value="/usr/bin/secret-tool"), \
+             patch.object(h.subprocess, "run", return_value=Mock(returncode=0)) as run:
+            h.secret("store", d, sentinel, kind="key-passphrase")
+        args, kwargs = run.call_args
+        self.assertEqual(args[0][:3], ["secret-tool", "store",
+                                      "--label=Omarchy remote host key passphrase"])
+        self.assertEqual(args[0][3:], h.secret_args(d, kind="key-passphrase"))
+        self.assertEqual(kwargs["input"], sentinel)
+        self.assertNotEqual(h.secret_args(d), h.secret_args(d, kind="key-passphrase"))
+        with patch.object(h.shutil, "which", return_value="/usr/bin/secret-tool"), \
+             patch.object(h.subprocess, "run", return_value=Mock(returncode=1)) as run, \
+             self.assertRaises(h.Error):
+            h.secret("lookup", d, kind="key-passphrase")
+        run.assert_called_once()
 
     def test_secret_missing_failure_timeout_redacted(self):
         sentinel = "NEVER_EXPOSE_ME"
@@ -440,6 +537,81 @@ class SecretTests(Isolated):
             self.call(op="deleteDevice", id=ID)
         self.assertEqual(secret.call_args.args[0], "clear")
 
+    def test_key_passphrase_save_requires_secret_and_never_persists_material(self):
+        d = profile(id="", host="new.example.test", keyPath="/tmp/synthetic-key",
+                    saveKeyPassphrase=True)
+        with self.assertRaises(h.Error):
+            self.call(op="saveDevice", device=d)
+        sentinel = "SYNTHETIC-key-passphrase"
+        with patch.object(h, "secret") as secret:
+            result = self.call(op="saveDevice", device=d, passphrase=sentinel)
+        self.assertEqual(secret.call_args.args[0], "store")
+        self.assertEqual(secret.call_args.args[2], sentinel)
+        self.assertEqual(secret.call_args.kwargs, {"kind": "key-passphrase"})
+        self.assertNotIn(sentinel, json.dumps(result))
+        self.assertNotIn(sentinel.encode(), self.store.path.read_bytes())
+
+    def test_unchanged_key_binding_keeps_passphrase_without_secret_access(self):
+        enabled = profile(keyPath="/tmp/synthetic-key", saveKeyPassphrase=True)
+        self.data["devices"] = [enabled]
+        with self.store.locked():
+            self.store.save(self.data)
+        with patch.object(h, "secret") as secret:
+            self.call(op="saveDevice", device=profile(
+                name="Renamed", keyPath="/tmp/synthetic-key", saveKeyPassphrase=True))
+        secret.assert_not_called()
+
+    def test_key_or_endpoint_change_requires_new_passphrase(self):
+        enabled = profile(keyPath="/tmp/synthetic-key", saveKeyPassphrase=True)
+        self.data["devices"] = [enabled]
+        with self.store.locked():
+            self.store.save(self.data)
+        for changes in [{"keyPath": "/tmp/other-key"}, {"host": "other.test"}]:
+            with self.subTest(changes=changes), patch.object(h, "secret") as secret, \
+                 self.assertRaises(h.Error):
+                self.call(op="saveDevice", device=profile(**{
+                    "keyPath": "/tmp/synthetic-key", "saveKeyPassphrase": True, **changes}))
+            secret.assert_not_called()
+
+    def test_disable_and_delete_clear_only_key_passphrase_namespace(self):
+        enabled = profile(keyPath="/tmp/synthetic-key", saveKeyPassphrase=True)
+        self.data["devices"] = [enabled]
+        with self.store.locked():
+            self.store.save(self.data)
+        with patch.object(h, "secret") as secret:
+            self.call(op="saveDevice", device=profile(keyPath="/tmp/synthetic-key"))
+        secret.assert_called_once()
+        self.assertEqual(secret.call_args.args[:2], ("clear", enabled))
+        self.assertEqual(secret.call_args.kwargs, {"kind": "key-passphrase"})
+        with self.store.locked():
+            self.store.save({**self.data, "devices": [enabled]})
+        with patch.object(h, "secret") as secret:
+            self.call(op="deleteDevice", id=ID)
+        secret.assert_called_once()
+        self.assertEqual(secret.call_args.args[:2], ("clear", enabled))
+        self.assertEqual(secret.call_args.kwargs, {"kind": "key-passphrase"})
+
+    def test_key_passphrase_failures_preserve_previous_profile_and_secret(self):
+        enabled = profile(keyPath="/tmp/synthetic-key", saveKeyPassphrase=True)
+        self.data["devices"] = [enabled]
+        with self.store.locked():
+            self.store.save(self.data)
+        original = self.store.path.read_bytes()
+        changed = profile(keyPath="/tmp/other-key", saveKeyPassphrase=True)
+        with patch.object(h, "secret", side_effect=h.Error("locked")), self.assertRaises(h.Error):
+            self.call(op="saveDevice", device=changed, passphrase="new-passphrase")
+        self.assertEqual(self.store.path.read_bytes(), original)
+        with patch.object(self.store, "save", side_effect=OSError("disk full")), \
+             patch.object(h, "secret") as secret, self.assertRaises(OSError):
+            self.call(op="saveDevice", device=changed, passphrase="new-passphrase")
+        calls = [(call.args[0], call.args[1]["keyPath"], call.kwargs)
+                 for call in secret.call_args_list]
+        self.assertEqual(calls, [
+            ("store", "/tmp/other-key", {"kind": "key-passphrase"}),
+            ("clear", "/tmp/other-key", {"kind": "key-passphrase"}),
+        ])
+        self.assertEqual(self.store.path.read_bytes(), original)
+
     def test_askpass_exact_prompt_only_and_endpoint_binding(self):
         self.data["devices"] = [profile(auth="password")]
         with self.store.locked():
@@ -456,6 +628,34 @@ class SecretTests(Isolated):
         for addition in [{"SSH_ASKPASS_PROMPT": "confirm"}, {"SSH_ASKPASS_PROMPT": "none"}, {"SSH_ASKPASS_PROMPT": "unexpected"}, {"REMOTE_HOSTS_ENDPOINT": "wrong"}]:
             with patch.object(h, "secret") as secret, self.assertRaises(h.Error):
                 h.askpass(expected, {**env, **addition}, self.store)
+            secret.assert_not_called()
+
+    def test_key_passphrase_askpass_requires_exact_key_and_bindings(self):
+        d = profile(keyPath="/tmp/synthetic-key", saveKeyPassphrase=True)
+        self.data["devices"] = [d]
+        with self.store.locked():
+            self.store.save(self.data)
+        env = {
+            "REMOTE_HOSTS_PROFILE": ID,
+            "REMOTE_HOSTS_ENDPOINT": h.revision(list(h.endpoint(d))),
+            "REMOTE_HOSTS_KEY": h.revision(d["keyPath"]),
+        }
+        expected = "Enter passphrase for key '/tmp/synthetic-key': "
+        with patch.object(h, "secret", return_value="key-secret") as secret:
+            self.assertEqual(h.askpass(expected, env, self.store), "key-secret")
+        secret.assert_called_once_with("lookup", h.device(d), kind="key-passphrase")
+        rejected = [
+            ("Enter passphrase for key '/tmp/other-key': ", {}),
+            ("tema@example.test's password: ", {}),
+            ("Are you sure you want to continue connecting (yes/no)?", {}),
+            (expected, {"SSH_ASKPASS_PROMPT": "confirm"}),
+            (expected, {"REMOTE_HOSTS_ENDPOINT": "old"}),
+            (expected, {"REMOTE_HOSTS_KEY": "old"}),
+        ]
+        for prompt, changes in rejected:
+            with self.subTest(prompt=prompt, changes=changes), patch.object(h, "secret") as secret, \
+                 self.assertRaises(h.Error):
+                h.askpass(prompt, {**env, **changes}, self.store)
             secret.assert_not_called()
 
     def test_generic_exception_json_never_echoes_request(self):
@@ -527,12 +727,35 @@ class SettingsTests(Isolated):
         other = h.Store(self.store.root)
         with patch.object(h.shutil, "which", side_effect=lambda name: "/synthetic/kitty" if name == "kitty" else None):
             result = h.dispatch({"op": "getSettings"}, other)
-        self.assertEqual(result["globalSettings"], {"version": 1, "defaultTerminal": "kitty", "language": "en"})
+        self.assertEqual(result["globalSettings"], {"version": 1, "defaultTerminal": "kitty", "language": "en", "layout": "auto",
+                                          "watchMinutes": 0})
         self.assertEqual([t["value"] for t in result["terminals"] if t["available"]], ["kitty"])
         self.assertEqual(self.store.path.read_bytes(), before)
         self.assertEqual(stat.S_IMODE(self.store.settings_path.stat().st_mode), 0o600)
         with other.locked():
             self.assertNotIn("defaultTerminal", h.export_document(other.load()))
+
+    def test_panel_layout_is_validated_and_defaults_to_auto(self):
+        with patch.object(h.shutil, "which", return_value="/usr/bin/kitty"):
+            saved = self.call(op="saveSettings", settings={"version": 1, "defaultTerminal": "kitty",
+                                                           "language": "en", "layout": "wide"})
+        self.assertEqual(saved["globalSettings"]["layout"], "wide")
+        with self.assertRaises(h.Error):
+            self.call(op="saveSettings", settings={"version": 1, "defaultTerminal": "kitty",
+                                                   "language": "en", "layout": "huge"})
+        self.assertEqual(h.global_settings({"version": 1, "defaultTerminal": "foot"})["layout"], "auto")
+
+    def test_background_check_interval_is_validated_and_defaults_to_off(self):
+        with patch.object(h.shutil, "which", return_value="/usr/bin/kitty"):
+            saved = self.call(op="saveSettings", settings={"version": 1, "defaultTerminal": "kitty",
+                                                           "language": "en", "layout": "auto", "watchMinutes": 15})
+            self.assertEqual(saved["globalSettings"]["watchMinutes"], 15)
+            self.assertEqual(self.call(op="getSettings")["globalSettings"]["watchMinutes"], 15)
+            for watch in (7, -5, True, "15", 15.0):
+                with self.subTest(watch=watch), self.assertRaises(h.Error):
+                    self.call(op="saveSettings", settings={"version": 1, "defaultTerminal": "kitty",
+                                                           "language": "en", "watchMinutes": watch})
+        self.assertEqual(h.global_settings({"version": 1, "defaultTerminal": "foot"})["watchMinutes"], 0)
 
     def test_invalid_or_secret_settings_do_not_replace_saved_selection(self):
         self.save_terminal("kitty")
@@ -679,6 +902,12 @@ class ClientTests(Isolated):
         for option in ["StrictHostKeyChecking=yes", "PreferredAuthentications=password", "KbdInteractiveAuthentication=no", "PubkeyAuthentication=no", "NumberOfPasswordPrompts=1"]:
             self.assertIn(option, args)
         self.assertNotIn("StrictHostKeyChecking=no", args)
+        key_args = h.ssh_argv(profile(
+            keyPath="/home/tema/My Key", saveKeyPassphrase=True))
+        for option in ["StrictHostKeyChecking=yes", "PreferredAuthentications=publickey",
+                       "PasswordAuthentication=no", "KbdInteractiveAuthentication=no",
+                       "NumberOfPasswordPrompts=1", "IdentitiesOnly=yes"]:
+            self.assertIn(option, key_args)
 
     def test_remote_agent_and_working_directory_argv(self):
         args = h.ssh_argv(profile(agents=["codex"]), "codex")
@@ -723,6 +952,13 @@ class ClientTests(Isolated):
         self.assertIn("'/home/tema/My Key'", ssh_command)
         self.assertIn("IdentitiesOnly=yes", ssh_command)
         self.assertEqual(args[-2], "tema@example.test:/srv/data")
+        args = h.sshfs_argv(profile(
+            keyPath="/home/tema/My Key", saveKeyPassphrase=True), mountpoint)
+        ssh_command = next(value for value in args if value.startswith("ssh_command="))
+        for option in ["PreferredAuthentications=publickey", "PasswordAuthentication=no",
+                       "KbdInteractiveAuthentication=no", "NumberOfPasswordPrompts=1"]:
+            self.assertIn(option, ssh_command)
+        self.assertNotIn("password_stdin", args)
 
     def test_mount_sftp_password_stdin_and_existing_mount_reuse(self):
         password = "SYNTHETIC-sftp-password"
@@ -748,6 +984,44 @@ class ClientTests(Isolated):
             h.mount_sftp(profile(auth="password"))
         secret.assert_not_called()
         run.assert_not_called()
+
+    def test_mount_sftp_key_passphrase_uses_child_askpass_environment(self):
+        key = self.root / "synthetic-key"
+        key.write_text("not a real private key")
+        d = profile(keyPath=str(key), saveKeyPassphrase=True)
+        inherited = {
+            "XDG_RUNTIME_DIR": str(self.root),
+            "SSH_ASKPASS": "/evil",
+            "SSH_ASKPASS_PROMPT": "confirm",
+            "REMOTE_HOSTS_KEY": "old",
+        }
+        with patch.dict(os.environ, inherited), \
+             patch.object(h.shutil, "which", return_value="/usr/bin/tool"), \
+             patch.object(h, "sftp_mount_kind", side_effect=["unmounted", "mounted"]), \
+             patch.object(h, "secret") as secret, \
+             patch.object(h.subprocess, "run", return_value=Mock(returncode=0)) as run, \
+             patch.object(h.subprocess, "Popen"):
+            self.assertIn("SSHFS", h.mount_sftp(d))
+        secret.assert_not_called()
+        self.assertIsNone(run.call_args.kwargs["input"])
+        env = run.call_args.kwargs["env"]
+        self.assertEqual(env["SSH_ASKPASS"], str(h.HERE / "askpass.py"))
+        self.assertEqual(env["SSH_ASKPASS_REQUIRE"], "force")
+        self.assertNotIn("SSH_ASKPASS_PROMPT", env)
+        self.assertEqual(env["REMOTE_HOSTS_KEY"], h.revision(str(key)))
+        self.assertNotIn("key-passphrase", json.dumps(run.call_args.args[0]))
+
+    def test_mount_sftp_key_passphrase_failure_returns_fixed_error(self):
+        d = profile(keyPath="/tmp/synthetic-key", saveKeyPassphrase=True)
+        sentinel = "SYNTHETIC-key-passphrase"
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(self.root)}), \
+             patch.object(h.shutil, "which", return_value="/usr/bin/tool"), \
+             patch.object(h, "sftp_mount_kind", return_value="unmounted"), \
+             patch.object(h.subprocess, "run", return_value=Mock(
+                 returncode=1, stdout=sentinel, stderr=sentinel)), \
+             patch.object(h.subprocess, "Popen"), self.assertRaises(h.Error) as raised:
+            h.mount_sftp(d)
+        self.assertNotIn(sentinel, str(raised.exception))
 
     def test_mountinfo_state_and_unmount_are_exact_and_safe(self):
         info = self.root / "mountinfo"
@@ -890,7 +1164,7 @@ class ClientTests(Isolated):
         self.data["devices"] = [profile(auth="password")]
         with self.store.locked():
             self.store.save(self.data)
-        with patch.object(h, "Store", return_value=self.store), patch.object(h.shutil, "which", return_value="ssh"), patch.object(h.os, "execvpe") as execute, patch.dict(os.environ, {"SSH_ASKPASS": "/evil", "SSH_ASKPASS_PROMPT": "confirm"}), patch.object(h, "secret") as secret:
+        with patch.object(h, "Store", return_value=self.store), patch.object(h.shutil, "which", return_value="ssh"), patch.object(h.os, "execvpe") as execute, patch.dict(os.environ, {"SSH_ASKPASS": "/evil", "SSH_ASKPASS_PROMPT": "confirm", "REMOTE_HOSTS_KEY": "old"}), patch.object(h, "secret") as secret:
             h.terminal(ID)
         secret.assert_not_called()
         executable, args, env = execute.call_args.args
@@ -901,6 +1175,26 @@ class ClientTests(Isolated):
         self.assertEqual(env["LC_ALL"], "C")
         self.assertEqual(env["TERM"], "xterm-256color")
         self.assertIn("StrictHostKeyChecking=yes", args)
+        self.assertNotIn("REMOTE_HOSTS_KEY", env)
+
+    def test_terminal_key_passphrase_environment_is_bound_without_secret(self):
+        key = self.root / "synthetic-key"
+        key.write_text("not a real private key")
+        d = profile(keyPath=str(key), saveKeyPassphrase=True, agents=["codex"])
+        self.data["devices"] = [d]
+        with self.store.locked():
+            self.store.save(self.data)
+        with patch.object(h, "Store", return_value=self.store), \
+             patch.object(h.shutil, "which", return_value="/usr/bin/tool"), \
+             patch.object(h.os, "execvpe") as execute, patch.object(h, "secret") as secret:
+            h.terminal(ID, "codex")
+        secret.assert_not_called()
+        _, args, env = execute.call_args.args
+        self.assertEqual(env["REMOTE_HOSTS_ENDPOINT"], h.revision(list(h.endpoint(d))))
+        self.assertEqual(env["REMOTE_HOSTS_KEY"], h.revision(str(key)))
+        self.assertEqual(env["LC_ALL"], "C")
+        self.assertEqual(env["TERM"], "xterm-256color")
+        self.assertIn("exec codex", args[-1])
 
     def test_copy_endpoint_uses_stdin(self):
         with patch.object(h.shutil, "which", return_value="wl-copy"), patch.object(h.subprocess, "run", return_value=Mock(returncode=0)) as run:

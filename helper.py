@@ -32,6 +32,8 @@ HERE = Path(__file__).resolve().parent
 MAX_BYTES = 1024 * 1024
 MAX_DEVICES = 100
 MAX_KEYSCAN_BYTES = 64 * 1024
+MAX_SCRIPTS = 32
+MAX_SCRIPT_BYTES = 16 * 1024
 KEYSCAN_TYPES = "rsa,ecdsa,ed25519"
 KEY_ALGORITHMS = {"ssh-rsa", "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521"}
 DEFAULT_GROUP = "00000000-0000-4000-8000-000000000001"
@@ -55,8 +57,12 @@ TERMINALS = {
 }
 # Legacy values remain readable so existing profiles are never bricked.
 LEGACY_LAUNCH_MODES = {"shell", "custom", *AI_COMMANDS}
+PANEL_LAYOUTS = ("auto", "compact", "wide")
+# Minutes between background checks of pinned hosts; 0 keeps them manual.
+WATCH_INTERVALS = (0, 5, 15, 30, 60)
 DEVICE_FIELDS = {"id", "name", "host", "port", "login", "group", "note", "auth", "keyPath",
-                 "client", "remoteFolder", "launchMode", "customExecutable", "agents", "agentFolder"}
+                 "saveKeyPassphrase", "client", "remoteFolder", "launchMode", "customExecutable",
+                 "agents", "agentFolder", "pinned"}
 
 
 class Error(Exception):
@@ -77,6 +83,8 @@ ENGLISH_MESSAGES = {
     "Неизвестный устаревший режим запуска SSH": "Unknown legacy SSH launch mode",
     "AI-агенты: выберите поддерживаемые CLI без повторов": "AI agents: select supported CLI tools without duplicates",
     "Для пароля путь к ключу должен быть пустым": "A password profile cannot also specify a key path",
+    "Некорректная настройка парольной фразы ключа": "Invalid key passphrase setting",
+    "Парольную фразу ключа можно сохранять только для явно указанного ключа": "A key passphrase can only be saved for an explicitly specified key",
     "Неподдерживаемый формат: требуется version 1, groups, devices": "Unsupported format: version 1, groups, and devices are required",
     "Нужно от 1 до 50 групп": "One to 50 groups are required",
     "Лимит: 100 устройств": "Limit: 100 hosts",
@@ -99,6 +107,9 @@ ENGLISH_MESSAGES = {
     "Неизвестная версия настроек": "Unknown settings version",
     "Неизвестный терминал": "Unknown terminal",
     "Неизвестный язык": "Unknown language",
+    "Неизвестная раскладка панели": "Unknown panel layout",
+    "Неизвестный интервал фоновой проверки": "Unknown background check interval",
+    "Некорректный признак закрепления": "Invalid pinned flag",
     "XDG_DATA_HOME должен быть абсолютным": "XDG_DATA_HOME must be an absolute path",
     "Выбранный терминал не установлен или отсутствует в PATH": "The selected terminal is not installed or is missing from PATH",
     "Secret Service: secret-tool не найден; пароль не сохранён": "Secret Service: secret-tool was not found; password was not saved",
@@ -110,6 +121,8 @@ ENGLISH_MESSAGES = {
     "Некорректное устройство": "Invalid host",
     "Введите пароль для нового адреса/логина/порта": "Enter the password for the new address, login, or port",
     "Пароль допустим только при входе по паролю": "A password is only allowed for password authentication",
+    "Введите парольную фразу для нового адреса/логина/порта/ключа": "Enter the key passphrase for the new address, login, port, or key",
+    "Парольная фраза ключа допустима только при включённом сохранении": "A key passphrase is only allowed when passphrase saving is enabled",
     "Дубликаты: skip или replace": "Duplicates: choose skip or replace",
     "Файл импорта не найден": "Import file not found",
     "Некорректный ключ SSH": "Invalid SSH key",
@@ -186,10 +199,42 @@ ENGLISH_MESSAGES = {
     "secret-tool не найден": "secret-tool was not found",
     "Требуется JSON-объект": "A JSON object is required",
     "Проверка принимает только адрес и SSH-порт": "The check accepts only address and SSH port",
-    "Настройки принимают только параметры терминала": "Settings accept only terminal and language parameters",
+    "Настройки принимают только параметры терминала": "Settings accept only terminal, language, layout, and background check parameters",
     "Настройки сохранены": "Settings saved",
     "Устройство сохранено": "Host saved",
     "Устройство удалено": "Host deleted",
+    "Скрипт должен содержать текст без NUL": "The script must contain text without NUL",
+    "Скрипт превышает 16 КиБ": "The script exceeds 16 KiB",
+    "Поддерживаются только скрипты sh или bash": "Only sh or bash scripts are supported",
+    "Некорректные поля скрипта": "Invalid script fields",
+    "Некорректная привязка скрипта": "Invalid script binding",
+    "Некорректное хранилище скриптов": "Invalid script storage",
+    "Повтор идентификатора скрипта": "Duplicate script identifier",
+    "Достигнут лимит скриптов": "The script limit has been reached",
+    "Выберите каталог в домашней папке": "Choose a folder in your home directory",
+    "Доступны только каталоги домашней папки": "Only folders inside your home directory are available",
+    "Некорректный путь": "Invalid path",
+    "Каталог должен принадлежать вам и не быть symlink или доступным для записи другим": "The folder must be owned by you, not a symlink or writable by others",
+    "Нужен исполняемый файл .sh": "An executable .sh file is required",
+    "Файл .sh должен быть вашим, исполняемым, безопасным и не больше 16 КиБ": "The .sh file must be yours, executable, safe and at most 16 KiB",
+    "Файл изменился во время чтения": "The file changed while being read",
+    "Скрипт должен быть в UTF-8": "The script must be UTF-8",
+    "Скрипт не найден или адрес хоста изменился": "Script not found or the host endpoint changed",
+    "Скрипт не найден": "Script not found",
+    "Небезопасный каталог скриптов": "Unsafe script folder",
+    "Некорректный путь к скрипту": "Invalid script source path",
+    "Некорректный запрос скрипта": "Invalid script preview request",
+    "Не удалось перенести каталог данных": "Could not migrate the data directory",
+    "Некорректный запрос просмотра файлов": "Invalid file browsing request",
+    "Некорректная сохранённая папка скриптов": "Invalid saved script folder",
+    "Введите содержимое или выберите файл .sh": "Enter script content or choose a .sh file",
+    "Скрипт с таким названием уже есть": "A script with this name already exists",
+    "Скрипт сохранён": "Script saved",
+    "Скрипт удалён": "Script deleted",
+    "SSH или проверенный host key недоступны": "SSH or a verified host key is unavailable",
+    "Некорректные аргументы SSH": "Invalid SSH arguments",
+    "Терминал не найден в PATH": "Terminal not found in PATH",
+    "Скрипт запущен; результат смотрите в терминале": "Script started; see its result in the terminal",
     "Сначала перенесите/удалите устройства группы": "Move or delete the hosts in this group first",
     "Группа не найдена": "Group not found",
     "Некорректные параметры экспорта": "Invalid export parameters",
@@ -214,7 +259,9 @@ LABELS_EN = {
     "Адрес": "Address", "Исполняемый файл": "Executable", "Имя": "Name",
     "Заметка": "Note", "Путь к ключу": "Key path", "Удалённая папка": "Remote folder",
     "Рабочая папка AI": "AI working folder", "Группа": "Group", "Пароль": "Password",
-    "Сохранённый пароль": "Saved password", "Файл импорта": "Import file",
+    "Сохранённый пароль": "Saved password", "Парольная фраза ключа": "Key passphrase",
+    "Сохранённая парольная фраза ключа": "Saved key passphrase", "Файл импорта": "Import file",
+    "Название скрипта": "Script name",
 }
 
 
@@ -232,7 +279,7 @@ def translate_message(message, language):
                 " управляющие символы запрещены": " contains forbidden control characters",
                 " нужен абсолютный путь; спецсимволы и .. запрещены": " must be an absolute path without special characters or ..",
             }
-            return english + endings.get(suffix, ":" + suffix)
+            return english + (endings.get(suffix) or ":" + suffix)
     if re.search(r"[А-Яа-яЁё]", message):
         return "Operation failed; check the input, permissions, and dependencies"
     return message
@@ -313,6 +360,8 @@ def device(value):
     require(d.get("auth") in ("agent", "password"), "Неизвестный способ входа")
     require(d.get("client") in ("ghostty", "vscode"), "Неизвестный клиент")
     d["keyPath"] = safe_path(d.get("keyPath", ""), "Путь к ключу")
+    d["saveKeyPassphrase"] = d.get("saveKeyPassphrase", False)
+    require(type(d["saveKeyPassphrase"]) is bool, "Некорректная настройка парольной фразы ключа")
     d["remoteFolder"] = safe_path(d.get("remoteFolder", ""), "Удалённая папка")
     d["launchMode"] = d.get("launchMode", "shell")
     require(d["launchMode"] in LEGACY_LAUNCH_MODES, "Неизвестный устаревший режим запуска SSH")
@@ -324,7 +373,11 @@ def device(value):
             and len(set(d["agents"])) == len(d["agents"]),
             "AI-агенты: выберите поддерживаемые CLI без повторов")
     d["agentFolder"] = safe_path(d.get("agentFolder", ""), "Рабочая папка AI")
+    d["pinned"] = d.get("pinned", False)
+    require(type(d["pinned"]) is bool, "Некорректный признак закрепления")
     require(d["auth"] != "password" or not d["keyPath"], "Для пароля путь к ключу должен быть пустым")
+    require(not d["saveKeyPassphrase"] or (d["auth"] == "agent" and d["keyPath"]),
+            "Парольную фразу ключа можно сохранять только для явно указанного ключа")
     return d
 
 
@@ -421,21 +474,169 @@ def atomic_text(path, value):
 
 
 def global_settings(value):
-    require(isinstance(value, dict)
-            and set(value) in ({"version", "defaultTerminal"}, {"version", "defaultTerminal", "language"}),
+    require(isinstance(value, dict) and {"version", "defaultTerminal"} <= set(value)
+            <= {"version", "defaultTerminal", "language", "layout", "watchMinutes"},
             "Некорректные поля глобальных настроек")
     require(type(value["version"]) is int and value["version"] == 1, "Неизвестная версия настроек")
     require(isinstance(value["defaultTerminal"], str) and value["defaultTerminal"] in TERMINALS,
             "Неизвестный терминал")
     language = value.get("language", "en")
     require(language in ("en", "ru"), "Неизвестный язык")
-    return {"version": 1, "defaultTerminal": value["defaultTerminal"], "language": language}
+    layout = value.get("layout", "auto")
+    require(layout in PANEL_LAYOUTS, "Неизвестная раскладка панели")
+    watch = value.get("watchMinutes", 0)
+    require(type(watch) is int and watch in WATCH_INTERVALS, "Неизвестный интервал фоновой проверки")
+    return {"version": 1, "defaultTerminal": value["defaultTerminal"], "language": language, "layout": layout,
+            "watchMinutes": watch}
 
 
 def settings_response(value):
     return {"globalSettings": value,
             "terminals": [{"value": name, "label": label, "available": shutil.which(argv[0]) is not None}
                           for name, (label, argv) in TERMINALS.items()]}
+
+
+def script_body(value):
+    require(isinstance(value, str) and value.strip() and "\x00" not in value,
+            "Скрипт должен содержать текст без NUL")
+    raw = value.encode("utf-8")
+    require(len(raw) <= MAX_SCRIPT_BYTES, "Скрипт превышает 16 КиБ")
+    first_line = value.split("\n", 1)[0]
+    require(not first_line.startswith("#!") or first_line in ("#!/bin/sh", "#!/usr/bin/env sh",
+                                                              "#!/bin/bash", "#!/usr/bin/env bash"),
+            "Поддерживаются только скрипты sh или bash")
+    return value
+
+
+def script_source_path(value):
+    if value == "":
+        return ""
+    require(isinstance(value, str) and len(value) <= 1024 and value.startswith("/")
+            and value.endswith(".sh") and "\x00" not in value and ".." not in Path(value).parts,
+            "Некорректный путь к скрипту")
+    require(user_home() in Path(value).parents, "Некорректный путь к скрипту")
+    return value
+
+
+def script_record(value):
+    require(isinstance(value, dict) and set(value) in (
+                {"id", "deviceId", "endpoint", "name", "body"},
+                {"id", "deviceId", "endpoint", "name", "body", "sourcePath"}),
+            "Некорректные поля скрипта")
+    require(isinstance(value["endpoint"], str) and re.fullmatch(r"[0-9a-f]{64}", value["endpoint"]),
+            "Некорректная привязка скрипта")
+    return {"id": identifier(value["id"]), "deviceId": identifier(value["deviceId"]),
+            "endpoint": value["endpoint"], "name": text(value["name"], "Название скрипта", 100),
+            "body": script_body(value["body"]), "sourcePath": script_source_path(value.get("sourcePath", ""))}
+
+
+def script_folder(path):
+    home = user_home()
+    require(isinstance(path, str) and len(path) <= 1024 and "\x00" not in path,
+            "Выберите каталог в домашней папке")
+    folder = user_home() if path == "" else Path(path)
+    require(folder.is_absolute(), "Выберите каталог в домашней папке")
+    require(".." not in folder.parts and "." not in folder.parts,
+            "Некорректный путь")
+    require(folder == home or home in folder.parents, "Доступны только каталоги домашней папки")
+    current = home
+    for part in folder.relative_to(home).parts:
+        require(part not in (".", ".."), "Некорректный путь")
+        current = current / part
+        info = current.lstat()
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022,
+                "Каталог должен принадлежать вам и не быть symlink или доступным для записи другим")
+    return folder
+
+
+@contextlib.contextmanager
+def open_script_folder(folder):
+    home = user_home()
+    fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in folder.relative_to(home).parts:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        info = os.fstat(fd)
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022,
+                "Небезопасный каталог скриптов")
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def script_file(path):
+    require(isinstance(path, str) and len(path) <= 1024 and path.endswith(".sh"),
+            "Нужен исполняемый файл .sh")
+    folder = script_folder(str(Path(path).parent))
+    target = folder / Path(path).name
+    with open_script_folder(folder) as directory_fd:
+        fd = os.open(target.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+        try:
+            info = os.fstat(fd)
+            require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+                    and info.st_mode & stat.S_IXUSR and not info.st_mode & 0o022
+                    and info.st_size <= MAX_SCRIPT_BYTES,
+                    "Файл .sh должен быть вашим, исполняемым, безопасным и не больше 16 КиБ")
+            raw = os.read(fd, MAX_SCRIPT_BYTES + 1)
+            require(len(raw) == info.st_size and os.fstat(fd).st_size == info.st_size,
+                    "Файл изменился во время чтения")
+            return script_body(raw.decode("utf-8"))
+        except UnicodeDecodeError:
+            raise Error("Скрипт должен быть в UTF-8") from None
+        finally:
+            os.close(fd)
+
+
+def script_files(path):
+    folder = script_folder(path)
+    rows = []
+    with open_script_folder(folder) as directory_fd, os.scandir(directory_fd) as entries:
+        for entry in entries:
+            if len(rows) >= 200:
+                break
+            if entry.name.startswith(".") or entry.is_symlink():
+                continue
+            try:
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022:
+                    rows.append({"name": entry.name, "directory": True, "size": 0})
+                elif (stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+                      and not info.st_mode & 0o022 and info.st_size <= MAX_SCRIPT_BYTES):
+                    rows.append({"name": entry.name, "directory": False, "size": info.st_size,
+                                 "selectable": entry.name.endswith(".sh") and bool(info.st_mode & stat.S_IXUSR)})
+            except OSError:
+                continue
+    rows.sort(key=lambda item: (not item["directory"], item["name"].casefold()))
+    return {"folder": str(folder), "parent": str(folder.parent) if folder != user_home() else "",
+            "files": rows}
+
+
+def script_binding(d):
+    return revision(list(endpoint(d)))
+
+
+def script_summary(body):
+    """First command line of a script, for the one-line preview under its name."""
+    for line in body.splitlines():
+        line = "".join(c if c.isprintable() else " " for c in line).strip()
+        if line and not line.startswith("#"):
+            return line[:120]
+    return ""
+
+
+def scripts_for_host(scripts, d):
+    return [{"id": s["id"], "name": s["name"], "sourcePath": s["sourcePath"], "summary": script_summary(s["body"])}
+            for s in scripts if s["deviceId"] == d["id"] and s["endpoint"] == script_binding(d)]
+
+
+def find_script(scripts, d, id_):
+    identifier(id_)
+    entry = next((s for s in scripts if s["id"] == id_ and s["deviceId"] == d["id"]
+                  and s["endpoint"] == script_binding(d)), None)
+    require(entry is not None, "Скрипт не найден или адрес хоста изменился")
+    return entry
 
 
 class Store:
@@ -446,6 +647,8 @@ class Store:
         self.legacy_roots = () if root is not None else tuple(Path(base) / app for app in LEGACY_APPS)
         self.path = self.root / "profiles.json"
         self.settings_path = self.root / "settings.json"
+        self.scripts_path = self.root / "scripts.json"
+        self.script_browser_path = self.root / "script-browser.json"
 
     def migrate_legacy(self):
         if self.root.exists() or self.root.is_symlink():
@@ -458,7 +661,10 @@ class Store:
         require(stat.S_ISDIR(legacy.st_mode) and legacy.st_uid == os.getuid()
                 and not legacy.st_mode & 0o077,
                 "Каталог старых данных должен принадлежать вам и иметь права 0700 (не symlink)")
-        os.rename(legacy_root, self.root)
+        try:
+            os.rename(legacy_root, self.root)
+        except OSError:
+            raise Error("Не удалось перенести каталог данных") from None
         directory = os.open(self.root.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory)
@@ -490,10 +696,43 @@ class Store:
 
     def load_settings(self):
         if not self.settings_path.exists() and not self.settings_path.is_symlink():
-            return {"version": 1, "defaultTerminal": "ghostty", "language": "en"}
+            return {"version": 1, "defaultTerminal": "ghostty", "language": "en", "layout": "auto", "watchMinutes": 0}
         check_file(self.settings_path)
         with self.settings_path.open(encoding="utf-8") as src:
             return global_settings(decode(src.read(MAX_BYTES + 1)))
+
+    def load_scripts(self):
+        if not self.scripts_path.exists() and not self.scripts_path.is_symlink():
+            return []
+        check_file(self.scripts_path)
+        with self.scripts_path.open(encoding="utf-8") as src:
+            value = decode(src.read(MAX_BYTES + 1))
+        require(isinstance(value, list) and len(value) <= MAX_SCRIPTS, "Некорректное хранилище скриптов")
+        scripts = [script_record(item) for item in value]
+        require(len({item["id"] for item in scripts}) == len(scripts), "Повтор идентификатора скрипта")
+        return scripts
+
+    def save_scripts(self, scripts):
+        require(len(scripts) <= MAX_SCRIPTS, "Достигнут лимит скриптов")
+        atomic_write(self.scripts_path, [script_record(item) for item in scripts])
+
+    def load_script_folder(self):
+        if not self.script_browser_path.exists() and not self.script_browser_path.is_symlink():
+            return ""
+        check_file(self.script_browser_path)
+        with self.script_browser_path.open(encoding="utf-8") as src:
+            value = decode(src.read(MAX_BYTES + 1))
+        require(isinstance(value, dict) and set(value) == {"folder"}
+                and isinstance(value["folder"], str) and len(value["folder"]) <= 1024,
+                "Некорректная сохранённая папка скриптов")
+        folder = Path(value["folder"])
+        require(folder.is_absolute() and ".." not in folder.parts
+                and (folder == user_home() or user_home() in folder.parents),
+                "Некорректная сохранённая папка скриптов")
+        return str(folder)
+
+    def save_script_folder(self, folder):
+        atomic_write(self.script_browser_path, {"folder": str(script_folder(folder))})
 
     def save_settings(self, value):
         value = global_settings(value)
@@ -503,16 +742,21 @@ class Store:
         return value
 
 
-def secret_args(d, app=APP):
+def secret_args(d, app=APP, *, kind="password"):
+    require(kind in ("password", "key-passphrase"), "Secret Service: операция не выполнена; разблокируйте хранилище")
     digest = hashlib.sha256(json.dumps(endpoint(d)).encode()).hexdigest()
-    return ["application", app, "profile", d["id"], "endpoint", digest]
+    args = ["application", app, "profile", d["id"], "endpoint", digest]
+    if kind == "key-passphrase":
+        args += ["kind", kind, "key", revision(d["keyPath"])]
+    return args
 
 
-def secret_run(operation, d, password=None, app=APP):
+def secret_run(operation, d, password=None, app=APP, *, kind="password"):
     argv = ["secret-tool", operation]
     if operation == "store":
-        argv += ["--label=Omarchy remote host"]
-    argv += secret_args(d, app)
+        label = "Omarchy remote host key passphrase" if kind == "key-passphrase" else "Omarchy remote host"
+        argv += [f"--label={label}"]
+    argv += secret_args(d, app, kind=kind)
     try:
         return subprocess.run(argv, input=password if operation == "store" else None,
                               capture_output=True, text=True, timeout=20)
@@ -520,39 +764,42 @@ def secret_run(operation, d, password=None, app=APP):
         raise Error("Secret Service недоступен или не ответил; операция отменена") from None
 
 
-def secret(operation, d, password=None):
+def secret(operation, d, password=None, *, kind="password"):
     require(shutil.which("secret-tool") is not None, "Secret Service: secret-tool не найден; пароль не сохранён")
+    label = "Парольная фраза ключа" if kind == "key-passphrase" else "Пароль"
+    saved_label = "Сохранённая парольная фраза ключа" if kind == "key-passphrase" else "Сохранённый пароль"
     if operation == "store":
-        text(password, "Пароль", 4096)
-        result = secret_run("store", d, password)
+        text(password, label, 4096)
+        result = secret_run("store", d, password, kind=kind)
         require(result.returncode == 0, "Secret Service: операция не выполнена; разблокируйте хранилище")
         return None
     if operation == "clear":
-        succeeded = secret_run("clear", d).returncode == 0
-        for legacy_app in LEGACY_APPS:
-            succeeded = secret_run("clear", d, app=legacy_app).returncode == 0 or succeeded
+        succeeded = secret_run("clear", d, kind=kind).returncode == 0
+        if kind == "password":
+            for legacy_app in LEGACY_APPS:
+                succeeded = secret_run("clear", d, app=legacy_app, kind=kind).returncode == 0 or succeeded
         require(succeeded, "Secret Service: операция не выполнена; разблокируйте хранилище")
         return None
-    result = secret_run("lookup", d)
-    if result.returncode == 1:
+    result = secret_run("lookup", d, kind=kind)
+    if kind == "password" and result.returncode == 1:
         for legacy_app in LEGACY_APPS:
-            legacy = secret_run("lookup", d, app=legacy_app)
+            legacy = secret_run("lookup", d, app=legacy_app, kind=kind)
             if legacy.returncode == 1:
                 result = legacy
                 continue
             result = legacy
             if legacy.returncode == 0:
                 password = legacy.stdout.removesuffix("\n")
-                text(password, "Сохранённый пароль", 4096)
-                stored = secret_run("store", d, password)
+                text(password, saved_label, 4096)
+                stored = secret_run("store", d, password, kind=kind)
                 require(stored.returncode == 0, "Secret Service: не удалось перенести сохранённый пароль")
-                cleared = secret_run("clear", d, app=legacy_app)
+                cleared = secret_run("clear", d, app=legacy_app, kind=kind)
                 require(cleared.returncode in (0, 1), "Secret Service: не удалось завершить перенос пароля")
                 return password
             break
     require(result.returncode == 0, "Secret Service: операция не выполнена; разблокируйте хранилище")
     password = result.stdout.removesuffix("\n")
-    text(password, "Сохранённый пароль", 4096)
+    text(password, saved_label, 4096)
     return password
 
 
@@ -564,37 +811,56 @@ def find_device(data, id_):
     return d
 
 
-def save_device(store, data, raw, password):
+def cleanup_unpublished_credentials(d, password, same_password, passphrase, same_passphrase):
+    if password and not same_password:
+        with contextlib.suppress(Error):
+            secret("clear", d)
+    if passphrase and not same_passphrase:
+        with contextlib.suppress(Error):
+            secret("clear", d, kind="key-passphrase")
+
+
+def save_device(store, data, raw, password, passphrase=""):
     require(isinstance(raw, dict), "Некорректное устройство")
     raw = dict(raw)
     if not raw.get("id"):
         raw["id"] = str(uuid.uuid4())
     d = device(raw)
+    passphrase = text(passphrase, "Парольная фраза ключа", 4096, empty=True)
     old = next((x for x in data["devices"] if x["id"] == d["id"]), None)
     if old and (endpoint(old) != endpoint(d) or old["remoteFolder"] != d["remoteFolder"]):
         require_sftp_disconnected(old)
     updated = {**data, "devices": [x for x in data["devices"] if x["id"] != d["id"]] + [d]}
     encoded_document(document(updated))  # validate size before any secret operation
-    same_secret = old and old["auth"] == "password" and endpoint(old) == endpoint(d)
-    require(d["auth"] != "password" or same_secret or password, "Введите пароль для нового адреса/логина/порта")
+    same_password = old and old["auth"] == "password" and endpoint(old) == endpoint(d)
+    same_passphrase = (old and old["saveKeyPassphrase"] and d["saveKeyPassphrase"]
+                       and endpoint(old) == endpoint(d) and old["keyPath"] == d["keyPath"])
+    require(d["auth"] != "password" or same_password or password,
+            "Введите пароль для нового адреса/логина/порта")
     require(not password or d["auth"] == "password", "Пароль допустим только при входе по паролю")
+    require(not d["saveKeyPassphrase"] or same_passphrase or passphrase,
+            "Введите парольную фразу для нового адреса/логина/порта/ключа")
+    require(not passphrase or d["saveKeyPassphrase"],
+            "Парольная фраза ключа допустима только при включённом сохранении")
     if password:
         secret("store", d, password)
+    if passphrase:
+        secret("store", d, passphrase, kind="key-passphrase")
     try:
-        # Publish before clearing the old credential: a disk failure must never
-        # leave the still-current profile without its working password.
+        # Publish before clearing an old credential: a disk failure must never
+        # leave the still-current profile without its working secret.
         store.save(updated)
     except Exception:
-        if password and not same_secret:
-            # Best-effort cleanup of the unpublished credential; the original
-            # profile and its distinct secret remain untouched.
-            with contextlib.suppress(Error):
-                secret("clear", d)
+        # Best-effort cleanup of an unpublished credential; the original
+        # profile and its distinct secret remain untouched.
+        cleanup_unpublished_credentials(d, password, same_password, passphrase, same_passphrase)
         raise
     # Clearing after publication may leave an inert orphan on Secret Service
     # failure, but can no longer break the profile that remains on disk.
-    if old and old["auth"] == "password" and (d["auth"] != "password" or not same_secret):
+    if old and old["auth"] == "password" and (d["auth"] != "password" or not same_password):
         secret("clear", old)
+    if old and old["saveKeyPassphrase"] and not same_passphrase:
+        secret("clear", old, kind="key-passphrase")
     return updated
 
 
@@ -602,6 +868,8 @@ def export_document(data, notes=False, paths=False):
     result = copy.deepcopy(data)
     for d in result["devices"]:
         d["auth"] = "agent"  # imports never claim a password exists
+        d["saveKeyPassphrase"] = False  # exports never claim a key passphrase exists
+        d["pinned"] = False  # pins are local view preferences, like collapsed groups
         if not notes:
             d["note"] = ""
         if not paths:
@@ -625,24 +893,39 @@ def import_preview(current, raw, policy):
             result["groups"].append({**g, "id": names[key]})
         mapping[g["id"]] = names[key]
     summary = {"added": 0, "skipped": 0, "replaced": 0}
+    rows = []
     for d in incoming["devices"]:
         existing = next((x for x in result["devices"] if endpoint(x) == endpoint(d)), None)
         if existing:
             if policy == "skip":
                 summary["skipped"] += 1
+                rows.append(import_row("skipped", existing, result["groups"]))
                 continue
             # Preserve local authentication, never import secret references/key material.
-            d.update(id=existing["id"], auth=existing["auth"], keyPath=existing["keyPath"])
+            d.update(id=existing["id"], auth=existing["auth"], keyPath=existing["keyPath"],
+                     saveKeyPassphrase=existing["saveKeyPassphrase"], pinned=existing["pinned"])
             result["devices"].remove(existing)
             summary["replaced"] += 1
+            action = "replaced"
         else:
             d["id"] = str(uuid.uuid4())
             summary["added"] += 1
+            action = "added"
         d["group"] = mapping[d["group"]]
         result["devices"].append(d)
+        rows.append(import_row(action, d, result["groups"]))
     result = document(result)
     encoded_document(result)  # A confirmed preview must remain readable after publication.
-    return result, summary
+    summary["hosts"] = len(result["devices"])
+    summary["groups"] = len(result["groups"])
+    return result, summary, rows
+
+
+def import_row(action, d, groups):
+    """One display row of an import preview; never carries paths or notes."""
+    group = next((g["name"] for g in groups if g["id"] == d["group"]), "")
+    return {"action": action, "name": d["name"], "host": d["host"], "port": d["port"],
+            "login": d["login"], "group": group, "auth": d["auth"], "agents": list(d["agents"])}
 
 
 def read_import(path):
@@ -773,10 +1056,8 @@ def bounded_keyscan(argv):
     finally:
         if process.poll() is None:
             process.kill()
-            try:
+            with contextlib.suppress(subprocess.TimeoutExpired):
                 process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                pass
         if process.stdout is not None:
             process.stdout.close()
     require(returncode == 0, "ssh-keyscan не получил ключи; проверьте адрес и SSH-порт")
@@ -923,10 +1204,8 @@ def validated_preview_keys(value):
 
 def ensure_ssh_directory(home):
     ssh_dir = Path(home) / ".ssh"
-    try:
+    with contextlib.suppress(FileExistsError):
         ssh_dir.mkdir(mode=0o700)
-    except FileExistsError:
-        pass
     check_ssh_directory(ssh_dir)
     return ssh_dir
 
@@ -995,15 +1274,20 @@ def ssh_remote_command(d, agent=None):
 
 def ssh_argv(d, agent=None):
     d = device(d)
+    strict = d["auth"] == "password" or d["saveKeyPassphrase"]
     args = ["ssh", "-F", "/dev/null", "-o", "PermitLocalCommand=no", "-o", "ClearAllForwardings=yes",
             "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
-            "-o", "StrictHostKeyChecking=" + ("yes" if d["auth"] == "password" else "ask"),
+            "-o", "StrictHostKeyChecking=" + ("yes" if strict else "ask"),
             "-p", str(d["port"]), "-l", d["login"]]
     if d["auth"] == "password":
         args += ["-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no",
                  "-o", "KbdInteractiveAuthentication=no", "-o", "NumberOfPasswordPrompts=1"]
-    elif d["keyPath"]:
-        args += ["-i", d["keyPath"], "-o", "IdentitiesOnly=yes"]
+    else:
+        if d["saveKeyPassphrase"]:
+            args += ["-o", "PreferredAuthentications=publickey", "-o", "PasswordAuthentication=no",
+                     "-o", "KbdInteractiveAuthentication=no", "-o", "NumberOfPasswordPrompts=1"]
+        if d["keyPath"]:
+            args += ["-i", d["keyPath"], "-o", "IdentitiesOnly=yes"]
     command = ssh_remote_command(d, agent)
     if command:
         args.append("-t")
@@ -1184,8 +1468,12 @@ def sshfs_argv(d, mountpoint):
     if d["auth"] == "password":
         ssh += ["-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no",
                 "-o", "KbdInteractiveAuthentication=no", "-o", "NumberOfPasswordPrompts=1"]
-    elif d["keyPath"]:
-        ssh += ["-i", d["keyPath"], "-o", "IdentitiesOnly=yes"]
+    else:
+        if d["saveKeyPassphrase"]:
+            ssh += ["-o", "PreferredAuthentications=publickey", "-o", "PasswordAuthentication=no",
+                    "-o", "KbdInteractiveAuthentication=no", "-o", "NumberOfPasswordPrompts=1"]
+        if d["keyPath"]:
+            ssh += ["-i", d["keyPath"], "-o", "IdentitiesOnly=yes"]
     args = ["sshfs", "-o", "ssh_command=" + shlex.join(ssh),
             "-p", str(d["port"]), "-o", "idmap=user"]
     if d["auth"] == "password":
@@ -1205,10 +1493,11 @@ def mount_sftp(d):
         private_dir(mountpoint)
         atomic_write(sftp_marker(d), sftp_binding(d))
         password = secret("lookup", d) if d["auth"] == "password" else None
+        env = ssh_environment(d) if d["saveKeyPassphrase"] else None
         try:
             result = subprocess.run(sshfs_argv(d, mountpoint),
                                     input=password + "\n" if password is not None else None,
-                                    capture_output=True, text=True, timeout=25)
+                                    capture_output=True, text=True, timeout=25, env=env)
         except (OSError, subprocess.TimeoutExpired):
             remove_sftp_marker(d)
             with contextlib.suppress(OSError):
@@ -1311,12 +1600,35 @@ def askpass(prompt, env=None, store=None):
     store = store or Store()
     with store.locked():
         d = find_device(store.load(), env.get("REMOTE_HOSTS_PROFILE"))
-    require(d["auth"] == "password" and env.get("REMOTE_HOSTS_ENDPOINT") == revision(list(endpoint(d))),
-            "Профиль входа изменился")
-    # OpenSSH password auth uses this literal prompt. No regex/fuzzy matching,
-    # no keyboard-interactive challenges, no host-key/passphrase confirmations.
-    require(prompt == f"{d['login']}@{d['host']}'s password: ", "Неожиданный запрос пароля")
-    return secret("lookup", d)
+    endpoint_matches = env.get("REMOTE_HOSTS_ENDPOINT") == revision(list(endpoint(d)))
+    password_auth = d["auth"] == "password"
+    passphrase_auth = (d["auth"] == "agent" and d["saveKeyPassphrase"]
+                       and env.get("REMOTE_HOSTS_KEY") == revision(d["keyPath"]))
+    require(endpoint_matches and (password_auth or passphrase_auth), "Профиль входа изменился")
+    if password_auth:
+        # OpenSSH password auth uses this literal prompt. No regex/fuzzy
+        # matching and no keyboard-interactive or confirmation prompts.
+        require(prompt == f"{d['login']}@{d['host']}'s password: ", "Неожиданный запрос пароля")
+        return secret("lookup", d)
+    # Accept only OpenSSH's C-locale prompt for this exact saved absolute path.
+    require(prompt == f"Enter passphrase for key '{d['keyPath']}': ",
+            "Неожиданный запрос пароля")
+    return secret("lookup", d, kind="key-passphrase")
+
+
+def ssh_environment(d):
+    env = os.environ.copy()
+    for name in ("SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_ASKPASS_PROMPT",
+                 "REMOTE_HOSTS_PROFILE", "REMOTE_HOSTS_ENDPOINT", "REMOTE_HOSTS_KEY"):
+        env.pop(name, None)
+    if d["auth"] == "password" or d["saveKeyPassphrase"]:
+        require(shutil.which("secret-tool") is not None, "secret-tool не найден")
+        env.update(SSH_ASKPASS=str(HERE / "askpass.py"), SSH_ASKPASS_REQUIRE="force",
+                   REMOTE_HOSTS_PROFILE=d["id"],
+                   REMOTE_HOSTS_ENDPOINT=revision(list(endpoint(d))), LC_ALL="C")
+        if d["saveKeyPassphrase"]:
+            env["REMOTE_HOSTS_KEY"] = revision(d["keyPath"])
+    return env
 
 
 def terminal(id_, agent=None):
@@ -1329,17 +1641,35 @@ def terminal(id_, agent=None):
     require(shutil.which("ssh") is not None, "ssh не найден")
     if d["keyPath"]:
         require(Path(d["keyPath"]).is_file(), "Файл ключа не найден")
-    env = os.environ.copy()
+    env = ssh_environment(d)
     # Remote hosts may lack the selected terminal's terminfo entry.
     # Advertise a broadly supported compatible terminal for remote TUIs.
     env["TERM"] = "xterm-256color"
-    for name in ("SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_ASKPASS_PROMPT", "REMOTE_HOSTS_PROFILE", "REMOTE_HOSTS_ENDPOINT"):
-        env.pop(name, None)
-    if d["auth"] == "password":
-        require(shutil.which("secret-tool") is not None, "secret-tool не найден")
-        env.update(SSH_ASKPASS=str(HERE / "askpass.py"), SSH_ASKPASS_REQUIRE="force",
-                   REMOTE_HOSTS_PROFILE=d["id"], REMOTE_HOSTS_ENDPOINT=revision(list(endpoint(d))), LC_ALL="C")
     os.execvpe("ssh", ssh_argv(d, agent), env)
+
+
+def terminal_script(host_id, script_id):
+    store = Store()
+    with store.locked():
+        d = find_device(store.load(), host_id)
+        entry = find_script(store.load_scripts(), d, script_id)
+    if entry is None:
+        raise Error("Скрипт не найден")
+    require(shutil.which("ssh") is not None and has_known_host_entry(d),
+            "SSH или проверенный host key недоступны")
+    if d["keyPath"]:
+        require(Path(d["keyPath"]).is_file(), "Файл ключа не найден")
+    env = ssh_environment(d)
+    env["TERM"] = "xterm-256color"
+    args = ssh_argv(d)
+    args = ["StrictHostKeyChecking=yes" if arg == "StrictHostKeyChecking=ask" else arg for arg in args]
+    args.insert(args.index("--"), "-T")
+    first_line = entry["body"].split("\n", 1)[0]
+    shell = "bash" if first_line in ("#!/bin/bash", "#!/usr/bin/env bash") else "sh"
+    args.extend([shell, "-s"])
+    # Script bytes only cross stdin; never argv, environment or a helper response.
+    result = subprocess.run(args, input=entry["body"].encode("utf-8"), env=env)
+    return result.returncode
 
 
 def probe(d):
@@ -1434,18 +1764,26 @@ def dispatch(req, store=None) -> dict[str, Any]:
         data = store.load()
         if op == "list":
             cleanup_sftp_runtime()
-            return {"data": data, "sftpStates": sftp_states(data["devices"]),
+            scripts = store.load_scripts()
+            return {"data": data, "scripts": {d["id"]: scripts_for_host(scripts, d) for d in data["devices"]},
+                    "sftpStates": sftp_states(data["devices"]),
                     **settings_response(store.load_settings())}
         if op == "saveDevice":
-            data = save_device(store, data, req.get("device"), req.get("password", ""))
+            data = save_device(store, data, req.get("device"), req.get("password", ""),
+                               req.get("passphrase", ""))
             return {"data": data, "message": "Устройство сохранено"}
         if op == "deleteDevice":
             d = find_device(data, req.get("id"))
             require_sftp_disconnected(d)
             if d["auth"] == "password":
                 secret("clear", d)
+            if d["saveKeyPassphrase"]:
+                secret("clear", d, kind="key-passphrase")
             data["devices"].remove(d)
             store.save(data)
+            scripts = store.load_scripts()
+            if any(s["deviceId"] == d["id"] for s in scripts):
+                store.save_scripts([s for s in scripts if s["deviceId"] != d["id"]])
             return {"data": data, "message": "Устройство удалено"}
         if op == "saveGroup":
             id_ = req.get("id") or str(uuid.uuid4())
@@ -1462,6 +1800,19 @@ def dispatch(req, store=None) -> dict[str, Any]:
             data["groups"] = [g for g in data["groups"] if g["id"] != id_]
             store.save(data)
             return {"data": data}
+        if op == "previewExport":
+            require(set(req) == {"op", "notes", "paths"} and type(req["notes"]) is bool
+                    and type(req["paths"]) is bool, "Некорректные параметры экспорта")
+            exported = export_document(data, req["notes"], req["paths"])
+            return {"exportPreview": {"hosts": len(exported["devices"]), "groups": len(exported["groups"]),
+                                      "sample": exported["devices"][0] if exported["devices"] else None}}
+        if op == "setPinned":
+            require(set(req) == {"op", "id", "pinned"} and type(req["pinned"]) is bool,
+                    "Некорректный признак закрепления")
+            d = find_device(data, req["id"])
+            d["pinned"] = req["pinned"]
+            store.save(data)
+            return {"data": data}
         if op == "export":
             require(type(req.get("notes", False)) is bool and type(req.get("paths", False)) is bool, "Некорректные параметры экспорта")
             path = Path(safe_path(req.get("path"), "Файл экспорта"))
@@ -1472,14 +1823,72 @@ def dispatch(req, store=None) -> dict[str, Any]:
             return {"message": "Экспорт записан без паролей; права 0600"}
         if op in ("previewImport", "import"):
             raw = read_import(req.get("path"))
-            merged, summary = import_preview(data, raw, req.get("policy", "skip"))
+            merged, summary, rows = import_preview(data, raw, req.get("policy", "skip"))
             token = revision([data, raw, req.get("policy", "skip")])
             if op == "import":
                 require(req.get("token") == token, "Файл или профили изменились; повторите просмотр импорта")
                 require_catalog_mounts_compatible(data, merged)
                 store.save(merged)
                 return {"data": merged, "message": "Импорт завершён; новые устройства используют ключ/агент"}
-            return {"preview": summary, "token": token, "previewDevices": merged["devices"]}
+            return {"preview": summary, "token": token, "previewRows": rows}
+        if op == "browseScripts":
+            require(set(req) == {"op", "folder"}, "Некорректный запрос просмотра файлов")
+            folder = req["folder"]
+            remembered = folder == ""
+            if remembered:
+                folder = store.load_script_folder()
+            fallback_allowed = remembered and folder != ""
+            try:
+                browser = script_files(folder)
+            except (Error, OSError):
+                if not fallback_allowed:
+                    raise
+                # A previously chosen folder may have been moved or removed.
+                # Never browse through the unsafe/stale path; reopen at home.
+                browser = script_files("")
+            store.save_script_folder(browser["folder"])
+            return {"browser": browser}
+        if op in ("saveScript", "deleteScript", "launchScript"):
+            d = find_device(data, req.get("id"))
+            scripts = store.load_scripts()
+            if op == "saveScript":
+                require(set(req) in ({"op", "id", "scriptId", "name", "body"},
+                                     {"op", "id", "scriptId", "name", "path"},
+                                     {"op", "id", "scriptId", "name"}), "Некорректные поля скрипта")
+                script_id = req.get("scriptId")
+                old = find_script(scripts, d, script_id) if script_id else None
+                body = (script_file(req["path"]) if "path" in req else script_body(req["body"])
+                        if "body" in req else old["body"] if old else None)
+                require(body is not None, "Введите содержимое или выберите файл .sh")
+                entry = script_record({"id": script_id or str(uuid.uuid4()), "deviceId": d["id"],
+                                       "endpoint": script_binding(d), "name": req["name"], "body": body,
+                                       "sourcePath": req["path"] if "path" in req else "" if "body" in req
+                                                     else old["sourcePath"] if old else ""})
+                require(not any(s["id"] != entry["id"] and s["deviceId"] == d["id"]
+                                and s["endpoint"] == entry["endpoint"]
+                                and s["name"].casefold() == entry["name"].casefold() for s in scripts),
+                        "Скрипт с таким названием уже есть")
+                store.save_scripts([entry if s["id"] == entry["id"] else s for s in scripts] if old else scripts + [entry])
+                return {"scripts": {d["id"]: scripts_for_host(store.load_scripts(), d)},
+                        "message": "Скрипт сохранён"}
+            require(set(req) == {"op", "id", "scriptId"}, "Некорректные поля скрипта")
+            entry = find_script(scripts, d, req["scriptId"])
+            if entry is None:
+                raise Error("Скрипт не найден")
+            if op == "deleteScript":
+                store.save_scripts([s for s in scripts if s["id"] != entry["id"]])
+                return {"scripts": {d["id"]: scripts_for_host(store.load_scripts(), d)},
+                        "message": "Скрипт удалён"}
+            require(shutil.which("ssh") is not None, "ssh не найден")
+            if not has_known_host_entry(d):
+                return host_key_preview(d)
+            client = store.load_settings()["defaultTerminal"]
+            args = [*TERMINALS[client][1], sys.executable, str(HERE / "helper.py"),
+                    "--terminal-script", d["id"], entry["id"]]
+            require(shutil.which(args[0]) is not None, "Терминал не найден в PATH")
+            subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+            return {"message": "Скрипт запущен; результат смотрите в терминале"}
         if op in ("launch", "launchAgent"):
             d = find_device(data, req.get("id"))
             agent = req.get("agent") if op == "launchAgent" else None
@@ -1529,12 +1938,33 @@ def dispatch(req, store=None) -> dict[str, Any]:
     return {"statuses": checks(devices)}
 
 
+def script_preview(req):
+    require(isinstance(req, dict), "Некорректный запрос скрипта")
+    if set(req) == {"path"}:
+        return script_file(req["path"])
+    require(set(req) == {"id", "scriptId"}, "Некорректный запрос скрипта")
+    store = Store()
+    with store.locked():
+        d = find_device(store.load(), req["id"])
+        entry = find_script(store.load_scripts(), d, req["scriptId"])
+    if entry is None:
+        raise Error("Скрипт не найден")
+    return entry["body"]
+
+
 def main():
     language = "en"
     try:
+        if len(sys.argv) == 2 and sys.argv[1] == "--script-preview":
+            raw = sys.stdin.buffer.readline(MAX_BYTES + 1)
+            require(len(raw) <= MAX_BYTES, "Запрос превышает 1 МиБ")
+            sys.stdout.write(script_preview(decode(raw.decode("utf-8"))))
+            return
         if len(sys.argv) == 2 and sys.argv[1] == "--probe":
             print(json.dumps(probe(device(decode(sys.stdin.read(MAX_BYTES + 1))))))
             return
+        if len(sys.argv) == 4 and sys.argv[1] == "--terminal-script":
+            sys.exit(terminal_script(sys.argv[2], sys.argv[3]))
         if len(sys.argv) in (3, 5) and sys.argv[1] == "--terminal":
             store = Store()
             with store.locked():
@@ -1553,11 +1983,15 @@ def main():
         print(json.dumps({"ok": True, **result}, ensure_ascii=False))
     except Error as e:
         message = translate_message(str(e), language)
-        if "--terminal" in sys.argv:
+        if sys.argv[1:2] == ["--script-preview"]:
+            sys.exit(1)
+        if sys.argv[1:2] in (["--terminal"], ["--terminal-script"]):
             print(message, file=sys.stderr)
             sys.exit(1)
         print(json.dumps({"ok": False, "error": message}, ensure_ascii=False))
     except Exception:
+        if sys.argv[1:2] == ["--script-preview"]:
+            sys.exit(1)
         # Never serialize exception text or tracebacks: requests may contain passwords.
         error = translate_message("Операция не выполнена: проверьте данные, права и зависимости", language)
         print(json.dumps({"ok": False, "error": error}, ensure_ascii=False))
