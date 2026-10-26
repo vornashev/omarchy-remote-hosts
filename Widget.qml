@@ -937,7 +937,7 @@ Ui.Panel {
         var auth = State.DraftState.auth
         var payload = {op: "saveDevice", device: {
             id: editId, name: nameField.text, host: hostField.text, port: Number(portField.text),
-            login: loginField.text, group: groupChoice.value, note: noteField.text,
+            login: loginField.text || "root", group: groupChoice.value, note: noteField.text,
             auth: auth, keyPath: auth === "agent" ? keyField.text : "",
             saveKeyPassphrase: auth === "agent" && State.DraftState.saveKeyPassphrase,
             client: State.DraftState.client || "ghostty", launchMode: "shell", customExecutable: "",
